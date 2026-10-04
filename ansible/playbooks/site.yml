@@ -1,0 +1,12 @@
+# Every host gets the base layer; role_* groups add their roles as they are written.
+- name: Base layer
+  hosts: all
+  gather_facts: false
+  pre_tasks:
+    - name: Wait for SSH (new guests)
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+    - name: Gather facts
+      ansible.builtin.setup:
+  roles:
+    - base_common

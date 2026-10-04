@@ -1,0 +1,2 @@
+timezone: Asia/Kuala_Lumpur
+base_packages: [curl, ca-certificates, vim, htop, jq, unzip, gnupg, python3-apt]

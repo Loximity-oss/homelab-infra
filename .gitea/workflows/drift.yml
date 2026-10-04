@@ -1,0 +1,18 @@
+name: drift
+on:
+  schedule:
+    - cron: "30 18 * * *" # 02:30 MYT
+  workflow_dispatch:
+jobs:
+  drift:
+    runs-on: host-plan
+    steps:
+      - name: nightly plan of every stack
+        env:
+          GIT_TOKEN: ${{ gitea.token }}
+          SERVER: ${{ gitea.server_url }}
+          REPO: ${{ gitea.repository }}
+        run: |
+          rm -rf base
+          git clone -q "${SERVER%%://*}://ci:${GIT_TOKEN}@${SERVER#*://}/${REPO}.git" base
+          bash base/scripts/ci-drift.sh

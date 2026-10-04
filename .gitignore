@@ -1,0 +1,7 @@
+.terraform/
+*.tfplan
+*.tfstate*
+crash.log
+.terraform.lock.hcl
+*.key
+*.dec.yaml

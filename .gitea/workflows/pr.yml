@@ -1,0 +1,22 @@
+name: pr
+# pull_request_target: the workflow and scripts always come from main; the PR's code is only linted and planned.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+jobs:
+  plan:
+    runs-on: host-plan
+    steps:
+      - name: lint, plan, classify, gate
+        env:
+          GIT_TOKEN: ${{ gitea.token }}
+          SERVER: ${{ gitea.server_url }}
+          REPO: ${{ gitea.repository }}
+          PR: ${{ gitea.event.pull_request.number }}
+          HEAD_SHA: ${{ gitea.event.pull_request.head.sha }}
+          HEAD_REF: ${{ gitea.event.pull_request.head.ref }}
+          TITLE: ${{ gitea.event.pull_request.title }}
+        run: |
+          rm -rf base head
+          git clone -q "${SERVER%%://*}://ci:${GIT_TOKEN}@${SERVER#*://}/${REPO}.git" base
+          bash base/scripts/ci-pr.sh
