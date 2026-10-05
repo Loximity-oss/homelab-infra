@@ -1,0 +1,13 @@
+hostname: hm1-dmz-guac01
+vmid: 210
+type: lxc
+role: guac
+os: ubuntu2604
+ip: 192.168.71.10
+cores: 2
+memory_mb: 4096
+disk_gb: 16
+owner: app
+patch: ring1
+description: 'Remote access gateway: Apache Guacamole (tomcat+guacd+DB, native packages)
+  and cloudflared tunnel connector'
