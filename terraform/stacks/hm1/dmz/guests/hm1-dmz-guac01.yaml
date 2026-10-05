@@ -9,5 +9,6 @@ memory_mb: 4096
 disk_gb: 16
 owner: app
 patch: ring1
+keyctl: true
 description: 'Remote access gateway: Apache Guacamole (tomcat+guacd+DB, native packages)
   and cloudflared tunnel connector'
