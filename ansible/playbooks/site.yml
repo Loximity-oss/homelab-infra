@@ -10,3 +10,8 @@
       ansible.builtin.setup:
   roles:
     - base_common
+
+- name: Guacamole gateway
+  hosts: role_guac
+  roles:
+    - app_guac

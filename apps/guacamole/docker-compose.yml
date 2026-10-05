@@ -1,0 +1,49 @@
+# Managed by Ansible role app_guac. Secrets come from /etc/guacamole/guac.env (not in repo).
+name: guacamole
+networks:
+  guac:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file: /etc/guacamole/guac.env
+    environment:
+      POSTGRES_DB: guacamole
+      POSTGRES_USER: guacamole
+    volumes:
+      - /var/lib/guacamole/pgdata:/var/lib/postgresql/data
+    networks: [guac]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guacamole -d guacamole"]
+      interval: 10s
+      retries: 6
+  guacd:
+    image: guacamole/guacd:1.6.0
+    restart: unless-stopped
+    networks: [guac]
+    security_opt: ["no-new-privileges:true"]
+  guacamole:
+    image: guacamole/guacamole:1.6.0
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+      guacd: {condition: service_started}
+    env_file: /etc/guacamole/guac.env
+    environment:
+      GUACD_HOSTNAME: guacd
+      POSTGRESQL_HOSTNAME: postgres
+      POSTGRESQL_DATABASE: guacamole
+      POSTGRESQL_USER: guacamole
+      WEBAPP_CONTEXT: ROOT
+      TOTP_ENABLED: "true"
+      REMOTE_IP_VALVE_ENABLED: "true"
+      PROXY_ALLOWED_IPS_REGEX: '172\.30\.0\..*'
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks: [guac]
+    security_opt: ["no-new-privileges:true"]

@@ -1,0 +1,132 @@
+- name: Install docker and tooling
+  ansible.builtin.apt:
+    name: [docker.io, docker-compose-v2, openssl, gzip]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 600
+
+- name: Enable docker
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Create directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ app_guac_dir }}"
+    - "{{ app_guac_conf_dir }}"
+    - "{{ app_guac_data_dir }}"
+    - "{{ app_guac_backup_dir }}"
+    - /etc/cloudflared
+
+- name: Generate DB password once
+  ansible.builtin.shell: |
+    set -e
+    umask 077
+    pw=$(openssl rand -hex 24)
+    printf 'POSTGRES_PASSWORD=%s\nPOSTGRESQL_PASSWORD=%s\n' "$pw" "$pw" > {{ app_guac_conf_dir }}/guac.env
+  args:
+    creates: "{{ app_guac_conf_dir }}/guac.env"
+  no_log: true
+
+- name: Install compose file
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../apps/guacamole/docker-compose.yml"
+    dest: "{{ app_guac_dir }}/docker-compose.yml"
+    mode: "0600"
+  notify: Restart guacamole-stack
+
+- name: Install scripts and units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {src: guacamole-stack.service.j2, dest: /etc/systemd/system/guacamole-stack.service, mode: "0644"}
+    - {src: cloudflared.service.j2, dest: /etc/systemd/system/cloudflared.service, mode: "0644"}
+    - {src: guac-backup.service.j2, dest: /etc/systemd/system/guac-backup.service, mode: "0644"}
+    - {src: guac-backup.timer.j2, dest: /etc/systemd/system/guac-backup.timer, mode: "0644"}
+    - {src: guac-backup.sh.j2, dest: "{{ app_guac_dir }}/guac-backup.sh", mode: "0700"}
+    - {src: reset-admin.sh.j2, dest: "{{ app_guac_dir }}/reset-admin.sh", mode: "0700"}
+
+- name: Start the stack
+  ansible.builtin.systemd:
+    name: guacamole-stack
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Wait for postgres
+  ansible.builtin.command: docker compose -f {{ app_guac_dir }}/docker-compose.yml exec -T postgres pg_isready -U guacamole -d guacamole
+  register: app_guac_pgready
+  until: app_guac_pgready.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: Initialise database schema (once)
+  ansible.builtin.shell: |
+    set -e
+    docker run --rm guacamole/guacamole:{{ app_guac_image_version }} /opt/guacamole/bin/initdb.sh --postgresql \
+      | docker compose -f {{ app_guac_dir }}/docker-compose.yml exec -T postgres psql -U guacamole guacamole -v ON_ERROR_STOP=1
+    touch {{ app_guac_data_dir }}/.schema-initialised
+  args:
+    creates: "{{ app_guac_data_dir }}/.schema-initialised"
+    executable: /bin/bash
+  register: app_guac_schema
+
+- name: Replace default admin password (before the tunnel exists)
+  ansible.builtin.command: "{{ app_guac_dir }}/reset-admin.sh"
+  args:
+    creates: /root/.guacamole-admin-initial
+  no_log: true
+
+- name: Restart web app after schema init
+  ansible.builtin.command: docker compose -f {{ app_guac_dir }}/docker-compose.yml restart guacamole
+  when: app_guac_schema is changed
+
+- name: Install cloudflared repo key
+  ansible.builtin.get_url:
+    url: https://pkg.cloudflare.com/cloudflare-main.gpg
+    dest: /usr/share/keyrings/cloudflare-main.gpg
+    mode: "0644"
+
+- name: Add cloudflared apt repo
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main"
+    filename: cloudflared
+    state: present
+
+- name: Install cloudflared
+  ansible.builtin.apt:
+    name: cloudflared
+    state: present
+    update_cache: true
+    lock_timeout: 600
+
+- name: Fail clearly if the tunnel token was not delivered
+  ansible.builtin.assert:
+    that: app_guac_cloudflared_token | length > 0
+    fail_msg: APP_GUAC_CLOUDFLARED_TOKEN not provided to the apply (secret/inbox/cloudflared-jb-tunnel).
+  no_log: true
+
+- name: Write tunnel token env file
+  ansible.builtin.copy:
+    content: "TUNNEL_TOKEN={{ app_guac_cloudflared_token }}\n"
+    dest: /etc/cloudflared/token.env
+    mode: "0600"
+  no_log: true
+  notify: Restart cloudflared
+
+- name: Start cloudflared and backup timer
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: [cloudflared, guac-backup.timer]

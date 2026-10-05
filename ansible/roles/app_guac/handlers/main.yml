@@ -1,0 +1,11 @@
+- name: Restart guacamole-stack
+  ansible.builtin.systemd:
+    name: guacamole-stack
+    state: restarted
+    daemon_reload: true
+
+- name: Restart cloudflared
+  ansible.builtin.systemd:
+    name: cloudflared
+    state: restarted
+    daemon_reload: true
