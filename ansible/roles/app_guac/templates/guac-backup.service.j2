@@ -1,7 +1,0 @@
-[Unit]
-Description=Guacamole database dump
-Requires=guacamole-stack.service
-
-[Service]
-Type=oneshot
-ExecStart={{ app_guac_dir }}/guac-backup.sh

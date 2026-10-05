@@ -1,6 +1,6 @@
 - name: Install docker and tooling
   ansible.builtin.apt:
-    name: [docker.io, docker-compose-v2, openssl, gzip]
+    name: [docker.io, docker-compose-v2, openssl]
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -21,7 +21,6 @@
     - "{{ app_guac_dir }}"
     - "{{ app_guac_conf_dir }}"
     - "{{ app_guac_data_dir }}"
-    - "{{ app_guac_backup_dir }}"
     - /etc/cloudflared
 
 - name: Generate DB password once
@@ -49,9 +48,6 @@
   loop:
     - {src: guacamole-stack.service.j2, dest: /etc/systemd/system/guacamole-stack.service, mode: "0644"}
     - {src: cloudflared.service.j2, dest: /etc/systemd/system/cloudflared.service, mode: "0644"}
-    - {src: guac-backup.service.j2, dest: /etc/systemd/system/guac-backup.service, mode: "0644"}
-    - {src: guac-backup.timer.j2, dest: /etc/systemd/system/guac-backup.timer, mode: "0644"}
-    - {src: guac-backup.sh.j2, dest: "{{ app_guac_dir }}/guac-backup.sh", mode: "0700"}
     - {src: reset-admin.sh.j2, dest: "{{ app_guac_dir }}/reset-admin.sh", mode: "0700"}
 
 - name: Start the stack
@@ -112,7 +108,7 @@
 - name: Fail clearly if the tunnel token was not delivered
   ansible.builtin.assert:
     that: app_guac_cloudflared_token | length > 0
-    fail_msg: APP_GUAC_CLOUDFLARED_TOKEN not provided to the apply (secret/inbox/cloudflared-jb-tunnel).
+    fail_msg: APP_GUAC_CLOUDFLARED_TOKEN not provided to the apply.
   no_log: true
 
 - name: Write tunnel token env file
@@ -123,10 +119,9 @@
   no_log: true
   notify: Restart cloudflared
 
-- name: Start cloudflared and backup timer
+- name: Start cloudflared
   ansible.builtin.systemd:
-    name: "{{ item }}"
+    name: cloudflared
     enabled: true
     state: started
     daemon_reload: true
-  loop: [cloudflared, guac-backup.timer]

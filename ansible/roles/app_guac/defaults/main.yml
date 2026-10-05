@@ -1,8 +1,6 @@
 app_guac_dir: /opt/guacamole
 app_guac_conf_dir: /etc/guacamole
 app_guac_data_dir: /var/lib/guacamole
-app_guac_backup_dir: /var/backups/guacamole
-app_guac_backup_keep: 7
 app_guac_image_version: "1.6.0"
-# Delivered by the pipeline from secret/inbox/cloudflared-jb-tunnel (key token). Never set in the repo.
+# Delivered by the pipeline from OpenBao (cloudflared jb tunnel token). Never set in the repo.
 app_guac_cloudflared_token: "{{ lookup('ansible.builtin.env', 'APP_GUAC_CLOUDFLARED_TOKEN', default='') }}"

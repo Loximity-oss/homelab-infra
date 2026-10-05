@@ -11,17 +11,17 @@ Design: docs/apps/guacamole.md. The guest exists only after PR #3 is merged and 
 ## Site down
 1. Tunnel: `journalctl -u cloudflared`; `systemctl restart cloudflared`. Unauthorized means token revoked or rotated: Infra updates the secret, re-apply.
 2. Stack: `docker compose -f /opt/guacamole/docker-compose.yml logs --tail 100`; `systemctl restart guacamole-stack`.
-3. Cloudflare 502/1033: public hostname service must be `http://localhost:8080`.
+3. Containers fail with a keyring/permission error from runc: the LXC lacks keyctl; escalate to Infrastructure (module option).
+4. Cloudflare 502/1033: public hostname service must be `http://localhost:8080`.
 
 ## Admin recovery
 Lost TOTP: another admin ticks 'Clear TOTP secret' on the user. Lost all admins: `rm /root/.guacamole-admin-initial; /opt/guacamole/reset-admin.sh` (new random guacadmin password written to that file).
 
-## Backup / restore
-Dumps: `/var/backups/guacamole/guacamole-*.sql.gz`.
-Restore: `cd /opt/guacamole; docker compose up -d postgres; zcat DUMP | docker compose exec -T postgres psql -U guacamole guacamole`; then `systemctl restart guacamole-stack`. For a clean restore drop and recreate the schema first.
+## Data
+No backups by decision. State is `/var/lib/guacamole/pgdata`; losing it means recreating users, connections and TOTP enrollments.
 
 ## Upgrade
 PR bumping image tags in apps/guacamole/docker-compose.yml; after apply run the smoke test.
 
 ## Rotate tunnel token
-Infra stores the new token at secret/inbox/cloudflared-jb-tunnel; re-run apply (restarts cloudflared).
+Infra updates the secret in OpenBao; re-run apply (restarts cloudflared).

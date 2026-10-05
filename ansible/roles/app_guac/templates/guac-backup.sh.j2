@@ -1,6 +1,0 @@
-#!/bin/sh
-set -eu
-umask 077
-out={{ app_guac_backup_dir }}/guacamole-$(date +%Y%m%d-%H%M%S).sql.gz
-docker compose -f {{ app_guac_dir }}/docker-compose.yml exec -T postgres pg_dump -U guacamole guacamole | gzip > "$out"
-ls -1t {{ app_guac_backup_dir }}/guacamole-*.sql.gz | tail -n +{{ app_guac_backup_keep + 1 }} | xargs -r rm -f
