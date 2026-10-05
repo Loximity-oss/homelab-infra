@@ -32,6 +32,7 @@ resource "proxmox_virtual_environment_container" "guest" {
 
   features {
     nesting = try(each.value.nesting, true)
+    keyctl  = try(each.value.keyctl, false)
   }
 
   cpu {
