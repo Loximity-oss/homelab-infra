@@ -1,0 +1,25 @@
+[Unit]
+Description=Guacamole PostgreSQL
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=guac-db
+Image=docker.io/library/postgres:{{ app_guac_postgres_version }}
+AutoUpdate=none
+Network=guac.network
+EnvironmentFile=/etc/guac/secrets/db.env
+Environment=POSTGRES_DB=guacamole_db
+Environment=POSTGRES_USER=guacamole
+Environment=PGDATA=/var/lib/postgresql/data/pgdata
+Volume=guac-pgdata:/var/lib/postgresql/data
+HealthCmd=pg_isready -U guacamole -d guacamole_db
+HealthInterval=30s
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

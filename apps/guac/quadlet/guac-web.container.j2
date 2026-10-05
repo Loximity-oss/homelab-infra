@@ -1,0 +1,31 @@
+[Unit]
+Description=Guacamole web application
+Requires=guac-db.service guac-guacd.service
+After=guac-db.service guac-guacd.service
+
+[Container]
+ContainerName=guac-web
+Image=docker.io/guacamole/guacamole:{{ app_guac_version }}
+AutoUpdate=none
+Network=guac.network
+PublishPort=127.0.0.1:8080:8080
+EnvironmentFile=/etc/guac/secrets/web.env
+Environment=GUACD_HOSTNAME=guac-guacd
+Environment=POSTGRESQL_HOSTNAME=guac-db
+Environment=POSTGRESQL_DATABASE=guacamole_db
+Environment=POSTGRESQL_USER=guacamole
+Environment=POSTGRESQL_USERNAME=guacamole
+Environment=WEBAPP_CONTEXT=ROOT
+Environment=REMOTE_IP_VALVE_ENABLED=true
+Environment=PROXY_ALLOWED_IPS_REGEX={{ app_guac_proxy_allowed_regex }}
+Environment=PROXY_IP_HEADER=X-Forwarded-For
+Environment=PROXY_PROTOCOL_HEADER=X-Forwarded-Proto
+Environment=EXTENSIONS={{ app_guac_extensions }}
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

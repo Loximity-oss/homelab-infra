@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Guacamole database dump
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

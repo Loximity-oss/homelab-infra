@@ -1,0 +1,10 @@
+app_guac_version: "1.6.0"
+app_guac_postgres_version: "17.11-alpine"
+app_guac_cloudflared_version: "2026.9.3"
+app_guac_net_subnet: "10.89.210.0/24"
+app_guac_net_gateway: "10.89.210.1"
+app_guac_proxy_allowed_regex: '10\.89\.210\.\d+'
+app_guac_extensions: "auth-totp"
+app_guac_backup_keep_days: 7
+# Tunnel token: supplied by the pipeline/secret mechanism when available. Empty = leave tunnel disabled.
+app_guac_cloudflared_token: ""

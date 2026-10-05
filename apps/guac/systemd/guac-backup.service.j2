@@ -1,0 +1,8 @@
+[Unit]
+Description=Guacamole database dump
+After=guac-db.service
+
+[Service]
+Type=oneshot
+Environment=GUAC_BACKUP_KEEP_DAYS={{ app_guac_backup_keep_days }}
+ExecStart=/usr/local/sbin/guac-backup

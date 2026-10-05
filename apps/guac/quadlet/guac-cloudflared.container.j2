@@ -1,0 +1,26 @@
+[Unit]
+Description=Cloudflare tunnel connector for Guacamole
+Requires=guac-web.service
+After=guac-web.service network-online.target
+Wants=network-online.target
+# Fail safe: stays inactive until the tunnel token file exists
+ConditionPathExists=/etc/guac/secrets/cloudflared.env
+
+[Container]
+ContainerName=guac-cloudflared
+Image=docker.io/cloudflare/cloudflared:{{ app_guac_cloudflared_version }}
+AutoUpdate=none
+Network=guac.network
+EnvironmentFile=/etc/guac/secrets/cloudflared.env
+Exec=tunnel --no-autoupdate --metrics 0.0.0.0:2000 run
+PublishPort=127.0.0.1:2000:2000
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

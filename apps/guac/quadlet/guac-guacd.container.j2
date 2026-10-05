@@ -1,0 +1,18 @@
+[Unit]
+Description=Guacamole guacd
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=guac-guacd
+Image=docker.io/guacamole/guacd:{{ app_guac_version }}
+AutoUpdate=none
+Network=guac.network
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
