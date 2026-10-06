@@ -1,0 +1,12 @@
+hostname: hm1-int-dns01
+vmid: 410
+type: lxc
+role: dns
+os: ubuntu2604
+ip: 192.168.72.10
+cores: 1
+memory_mb: 512
+disk_gb: 8
+owner: infra
+patch: ring1
+description: Empty LXC for internal DNS resolver (no apps yet)
