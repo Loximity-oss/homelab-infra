@@ -31,6 +31,62 @@ for s in "${STACKS[@]}"; do
 done
 [ ${#STACKS[@]} -eq 0 ] && note "- No Terraform stacks changed."
 
+# ---- Forget stale SSH host keys of guests CREATED or REPLACED by this apply (issue #6).
+# A new guest that reuses an IP has a new host key; with StrictHostKeyChecking=accept-new (ansible.cfg) ssh refuses
+# the mismatch instead of recording it. Only IPs of create/replace actions in the applied plans are touched.
+NEW_IPS=()
+if [ ${#STACKS[@]} -gt 0 ]; then
+  if INFRA_ROOT="$BASE" python3 - "$OUT" "${STACKS[@]}" > "$W/new-ips.txt" 2> "$W/new-ips.err" <<'PY'
+import ipaddress, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["INFRA_ROOT"], "scripts"))
+from specs import load_specs
+out, stacks = sys.argv[1], sys.argv[2:]
+ip_of = {s.get("hostname"): str(s.get("ip") or "") for s in load_specs()}
+ips = set()
+for st in stacks:
+    parts = st.rstrip("/").split("/")
+    plan = os.path.join(out, f"{parts[-2]}-{parts[-1]}.plan.json")
+    if not os.path.exists(plan):
+        print(f"no plan json for {st}", file=sys.stderr)
+        continue
+    for rc in json.load(open(plan)).get("resource_changes", []):
+        if rc.get("type") != "proxmox_virtual_environment_container":
+            continue
+        if "create" not in (rc.get("change") or {}).get("actions", []):  # create, or replace (delete+create)
+            continue
+        ip = ip_of.get(rc.get("index"), "")
+        if not ip:
+            try:
+                ip = rc["change"]["after"]["initialization"][0]["ip_config"][0]["ipv4"][0]["address"] or ""
+            except (KeyError, IndexError, TypeError):
+                ip = ""
+        ip = ip.split("/")[0].strip()
+        try:
+            ips.add(str(ipaddress.ip_address(ip)))
+        except ValueError:
+            if ip:
+                print(f"skipping invalid ip {ip!r}", file=sys.stderr)
+print("\n".join(sorted(ips)))
+PY
+  then
+    mapfile -t NEW_IPS < <(sed '/^$/d' "$W/new-ips.txt")
+  else
+    note "- ⚠️ Could not determine created/replaced guest IPs; known_hosts left unchanged: $(tail -1 "$W/new-ips.err" 2>/dev/null || true)"
+  fi
+fi
+if [ ${#NEW_IPS[@]} -gt 0 ]; then
+  KH_HOME="${HOME:-$(getent passwd "$(id -u)" | cut -d: -f6)}"
+  for ip in "${NEW_IPS[@]}"; do
+    # The known_hosts files ssh (and therefore Ansible) actually uses for this host as the runner user.
+    mapfile -t KH < <(ssh -G -l root "$ip" 2>/dev/null | awk '$1=="userknownhostsfile"{for(i=2;i<=NF;i++)print $i}' | sed "s|^~|$KH_HOME|" || true)
+    [ ${#KH[@]} -gt 0 ] || KH=("$KH_HOME/.ssh/known_hosts")
+    for f in "${KH[@]}"; do
+      if [ -f "$f" ]; then ssh-keygen -R "$ip" -f "$f" >/dev/null 2>&1 || true; fi
+    done
+  done
+  note "- 🔑 Cleared old SSH host keys for created/replaced guest(s): ${NEW_IPS[*]}"
+fi
+
 # ---- Ansible: changed hosts that exist, or every host when ansible/ changed
 HOSTS=$(INFRA_ROOT="$BASE" python3 - "$W/applied-changed.json" <<'PY'
 import json, os, sys
