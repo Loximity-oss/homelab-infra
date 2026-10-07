@@ -1,0 +1,4 @@
+app_name: example
+app_image: traefik/whoami:latest
+app_port: 8080
+app_secret_path: ""        # e.g. "{{ zone }}/secret/apps/example" — rendered via community.hashi_vault on the apply runner

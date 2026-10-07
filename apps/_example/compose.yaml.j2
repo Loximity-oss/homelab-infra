@@ -1,0 +1,7 @@
+# Example stack rendered by ansible/roles/app_example to /opt/{{ app_name }}/compose.yaml
+services:
+  app:
+    image: "{{ app_image }}"
+    restart: unless-stopped
+    ports:
+      - "{{ app_port }}:80"

@@ -1,0 +1,19 @@
+name: apply
+on:
+  push:
+    branches: [main]
+jobs:
+  apply:
+    runs-on: host-apply
+    steps:
+      - name: apply saved plan, configure hosts
+        env:
+          GIT_TOKEN: ${{ gitea.token }}
+          SERVER: ${{ gitea.server_url }}
+          REPO: ${{ gitea.repository }}
+          SHA: ${{ gitea.sha }}
+        run: |
+          rm -rf base
+          git clone -q "${SERVER%%://*}://ci:${GIT_TOKEN}@${SERVER#*://}/${REPO}.git" base
+          git -C base checkout -q "$SHA"
+          bash base/scripts/ci-apply.sh
