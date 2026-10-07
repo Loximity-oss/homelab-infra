@@ -1,3 +1,4 @@
+# keyctl guests: see host/README.md (pve-feature-broker).
 locals {
   prefix          = split("/", var.zone_cfg.cidr)[1]
   protected_vmids = [for k, _ in try(var.protected.vmids, {}) : tonumber(k)]
