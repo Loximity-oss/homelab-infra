@@ -9,7 +9,7 @@ A (auto): everything else (new guests, updates outside shr, docs).
 """
 import argparse, fnmatch, json, pathlib, yaml
 
-C_PATHS = [".gitea/*", "policy/*", "scripts/*", "secrets/*", ".sops.yaml", "ansible/keys/*", "terraform/stacks/*/unifi/*"]
+C_PATHS = ["host/*", ".gitea/*", "policy/*", "scripts/*", "secrets/*", ".sops.yaml", "ansible/keys/*", "terraform/stacks/*/unifi/*"]
 B_PATHS = ["terraform/modules/*", "ansible/roles/*", "ansible/playbooks/*", "ansible/ansible.cfg"]
 # Only guest resources can be A/B. Anything else the pipeline can touch with DevOpsAdmin (pools, cluster options,
 # storage, network, SDN, firewall, ACLs, files on the host, ...) is host-level and therefore Class C.

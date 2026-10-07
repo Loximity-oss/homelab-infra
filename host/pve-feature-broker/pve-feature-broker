@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""pve-feature-broker — runs as root on hm1-mgt-pve01 every minute (design-v7, option B, 2026-10-08).
+
+Proxmox lets only root@pam change container feature flags other than nesting, and the pipeline never runs as root.
+This broker does exactly one thing on the pipeline's behalf: an LXC tagged `feat-keyctl` gets `nesting=1,keyctl=1`.
+  - refuses protected VMIDs, VMIDs outside guest-zone blocks, privileged containers, and anything on vmbr0
+  - a stopped container it just fixed is started (new guests are created stopped when keyctl is requested)
+  - a running container without keyctl is fixed and rebooted once
+  - never touches anything else; every action is logged to the journal (tag pve-feature-broker)
+Config: /etc/pve-feature-broker.json. Source: homelab-infra host/pve-feature-broker/ (Class C); installed by root.
+"""
+import json, subprocess, syslog
+
+CONF = json.load(open("/etc/pve-feature-broker.json"))
+syslog.openlog("pve-feature-broker")
+
+
+def sh(*a):
+    return subprocess.run(a, capture_output=True, text=True, check=True).stdout
+
+
+def log(msg):
+    syslog.syslog(msg)
+    print(msg)
+
+
+res = json.loads(sh("pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json"))
+for r in res:
+    tags = (r.get("tags") or "").split(";")
+    if r.get("type") != "lxc" or CONF["tag"] not in tags:
+        continue
+    vmid, node = int(r["vmid"]), r["node"]
+    if vmid in CONF["protected"]:
+        log(f"{vmid}: refused (protected)"); continue
+    if not any(lo <= vmid <= hi for lo, hi in CONF["ranges"]):
+        log(f"{vmid}: refused (outside guest-zone VMID blocks)"); continue
+    cfg = json.loads(sh("pvesh", "get", f"/nodes/{node}/lxc/{vmid}/config", "--output-format", "json"))
+    if cfg.get("lock"):
+        continue  # being created/changed; next run
+    if str(cfg.get("unprivileged", 0)) != "1":
+        log(f"{vmid}: refused (privileged container)"); continue
+    if any("bridge=vmbr0" in str(v) for k, v in cfg.items() if k.startswith("net")):
+        log(f"{vmid}: refused (attached to vmbr0)"); continue
+    feats = dict(x.split("=", 1) for x in str(cfg.get("features", "")).split(",") if "=" in x)
+    if feats.get("keyctl") == "1":
+        continue
+    sh("pct", "set", str(vmid), "--features", "nesting=1,keyctl=1")
+    if r.get("status") == "running":
+        sh("pct", "reboot", str(vmid))
+        log(f"{vmid} {r.get('name')}: keyctl enabled, rebooted")
+    else:
+        sh("pct", "start", str(vmid))
+        log(f"{vmid} {r.get('name')}: keyctl enabled, started")

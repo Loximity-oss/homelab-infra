@@ -1,3 +1,13 @@
+- name: Wait until keyctl is available (feat-keyctl guests; set by host/pve-feature-broker)
+  ansible.builtin.command: python3 -c "import ctypes,sys; sys.exit(0 if ctypes.CDLL(None, use_errno=True).syscall(250, 0, -3, 0) >= 0 else 1)"
+  register: base_keyctl
+  changed_when: false
+  failed_when: false
+  until: base_keyctl.rc == 0
+  retries: 20
+  delay: 6
+  when: keyctl | default(false)
+
 - name: Set timezone
   community.general.timezone:
     name: "{{ timezone }}"

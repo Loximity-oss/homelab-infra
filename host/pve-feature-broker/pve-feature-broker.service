@@ -1,0 +1,5 @@
+[Unit]
+Description=Proxmox feature broker (keyctl for feat-keyctl containers; root-only Proxmox check)
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pve-feature-broker
