@@ -1,0 +1,12 @@
+hostname: hm1-lab-ws01
+vmid: 810
+type: lxc
+role: ws
+os: ubuntu2604
+ip: 192.168.72.240
+cores: 1
+memory_mb: 512
+disk_gb: 8
+owner: cfg
+patch: ring2
+description: v7 gate test (Class A); destroy after
