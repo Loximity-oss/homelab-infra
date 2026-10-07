@@ -10,3 +10,8 @@
       ansible.builtin.setup:
   roles:
     - base_common
+
+- name: whoami test app
+  hosts: hm1-lab-web01
+  roles:
+    - app_whoami

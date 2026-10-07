@@ -1,0 +1,7 @@
+# Rendered by ansible/roles/app_whoami to /opt/{{ app_whoami_name }}/compose.yaml
+services:
+  whoami:
+    image: "{{ app_whoami_image }}"
+    restart: unless-stopped
+    ports:
+      - "{{ app_whoami_port }}:80"

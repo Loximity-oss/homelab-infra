@@ -1,0 +1,40 @@
+# packages -> stack from apps/whoami/ -> service -> healthcheck
+- name: Docker engine
+  ansible.builtin.apt:
+    name: [docker.io, docker-compose-v2]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 600
+
+- name: Docker running
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: App directory
+  ansible.builtin.file:
+    path: "/opt/{{ app_whoami_name }}"
+    state: directory
+    mode: "0750"
+
+- name: Stack
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../../apps/whoami/compose.yaml.j2"
+    dest: "/opt/{{ app_whoami_name }}/compose.yaml"
+    mode: "0640"
+  notify: restart whoami
+
+- name: Running
+  ansible.builtin.command: docker compose -f /opt/{{ app_whoami_name }}/compose.yaml up -d
+  changed_when: false
+
+- name: Healthcheck
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_whoami_port }}/"
+    status_code: 200
+  register: app_whoami_hc
+  retries: 10
+  delay: 3
+  until: app_whoami_hc.status == 200
