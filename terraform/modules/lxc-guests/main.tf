@@ -32,6 +32,9 @@ resource "proxmox_virtual_environment_container" "guest" {
 
   features {
     nesting = try(each.value.nesting, true)
+    # Docker in an unprivileged CT needs keyctl alongside nesting (issue #5).
+    # Follows nesting by default; a spec may override with `keyctl:`.
+    keyctl = try(each.value.keyctl, try(each.value.nesting, true))
   }
 
   cpu {
