@@ -1,3 +1,4 @@
+# Needs keyctl: true on the guest (Docker in unprivileged LXC).
 # packages -> stack from apps/whoami/ -> service -> healthcheck
 - name: Docker engine
   ansible.builtin.apt:
