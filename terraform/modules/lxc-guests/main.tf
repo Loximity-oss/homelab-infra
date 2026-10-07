@@ -13,6 +13,7 @@ locals {
         "os-${s.os}",
         "patch-${s.patch}",
         "env-${try(s.env, local.is_lab ? "lab" : "prod")}",
+        try(s.keyctl, false) ? "feat-keyctl" : "",
       ])))
     })
   }
@@ -28,7 +29,9 @@ resource "proxmox_virtual_environment_container" "guest" {
   pool_id       = var.zone_cfg.pool
   unprivileged  = true
   start_on_boot = true
-  started       = true
+  # keyctl guests are created stopped: host/pve-feature-broker (root) sets keyctl=1 and starts them (Proxmox allows
+  # feature flags other than nesting only for root@pam; the pipeline never runs as root).
+  started = !try(each.value.keyctl, false)
 
   features {
     nesting = try(each.value.nesting, true)
@@ -82,7 +85,8 @@ resource "proxmox_virtual_environment_container" "guest" {
 
   lifecycle {
     # Pool membership is set at create time; the provider reports a perpetual diff otherwise.
-    ignore_changes = [pool_id]
+    # features/started: keyctl is set by host/pve-feature-broker after create; Terraform must not fight it (403).
+    ignore_changes = [pool_id, features, started]
 
     precondition {
       condition     = !contains(local.protected_vmids, each.value.vmid)

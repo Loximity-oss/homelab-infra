@@ -10,3 +10,4 @@ disk_gb: 10
 owner: cfg
 patch: ring1
 description: whoami test web app (traefik/whoami via compose)
+keyctl: true
