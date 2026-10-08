@@ -28,7 +28,8 @@ class Report:
         self.rows = []
 
     def add(self, host, layer, check, status, evidence=""):   # status: pass | fail | skip
-        self.rows.append({"host": host, "layer": layer, "check": check, "status": status, "evidence": str(evidence)[:300]})
+        self.rows.append({"host": host, "layer": layer, "check": check, "status": status,
+                          "evidence": " ".join(str(evidence).split())[:300]})
 
     def ok(self, host, layer, check, cond, evidence=""):
         self.add(host, layer, check, "pass" if cond else "fail", evidence)
@@ -165,6 +166,12 @@ def l3(rep, hosts, out):
             name = f"{r.get('resource-type', '')}:{r.get('resource-id', '')}:{r.get('property', '')}"
             st = "skip" if r.get("skipped") else "pass" if r.get("successful") else "fail"
             ev = r.get("summary-line", "") if st != "pass" else (r.get("found") or [""])[0] if isinstance(r.get("found"), list) else ""
+            if st == "fail" and r.get("resource-id") == "l3-no-failed-units":
+                try:  # Goss can't show the command's output; name the failed units from the runner
+                    ip = str(next(s["ip"] for s in load_specs() if s["hostname"] == h))
+                    ev = "failed units: " + (ssh(ip, "systemctl list-units --state=failed --no-legend --plain | awk '{print $1}' | paste -sd' '").stdout.strip() or "?")
+                except Exception:
+                    pass
             rep.add(h, "L3", name, st, ev)
 
 
