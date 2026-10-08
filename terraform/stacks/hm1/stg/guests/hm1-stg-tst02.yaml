@@ -7,3 +7,5 @@ ip: 192.168.76.12
 owner: infra
 patch: ring1
 description: CD acceptance test guest (VM, D6 baseline sizing) - throwaway, destroyed after A7
+memory_mb: 3072
+disk_gb: 20
