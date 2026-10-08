@@ -18,6 +18,11 @@ export TF_VAR_standards_dir="$OUT/standards"
 (cd "$BASE" && python3 scripts/changed.py "$SHA^1" "$SHA") > "$W/applied-changed.json"
 mapfile -t STACKS < <(python3 -c 'import json,sys;print("\n".join(json.load(open(sys.argv[1]))["stacks"]))' "$W/applied-changed.json" | sed '/^$/d')
 note "## Apply (\`${SHA:0:8}\`)"
+# Templates must be clone-only for this token before anything is applied (decision 32 D5).
+if ! PROXMOX_VE_API_TOKEN="$APPLY_TOKEN" python3 "$BASE/scripts/template-guard.py" "$TF_VAR_standards_dir" > "$W/template-guard.txt" 2>&1; then
+  note "- ❌ **Template guard** — nothing applied"; note '```'; cat "$W/template-guard.txt" >> "$REPORT"; note '```'; finish 1
+fi
+note "- 🔒 $(tail -1 "$W/template-guard.txt")"
 for s in "${STACKS[@]}"; do
   n=$(stack_name "$s")
   [ -f "$OUT/$n.tfplan" ] || { note "- ❌ $n: saved plan missing"; finish 1; }

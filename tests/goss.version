@@ -1,0 +1,6 @@
+# Goss pin for CD testing (decision 32). Installed on CT 300 by rebuild/v7/devops/05-goss.sh at /opt/goss/<version>/;
+# the verify role copies it to guests and checks binary_sha256. Bump = Class C PR (tests/*).
+version: 0.4.10
+tarball: goss_0.4.10_linux_x86_64.tar.gz
+tarball_sha256: 26e365428946294bcec0c61d867bb3c8349f39feb3d0e6f59084e98632785cc7
+binary_sha256: 29d64f541c2b6edee5c7ee75dd5dd4da1c8b94e336c56ffeb864ae460a527c4f

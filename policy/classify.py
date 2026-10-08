@@ -3,7 +3,7 @@
 Usage: classify.py --changed changed.json --plans DIR --protected protected.yaml
 Prints JSON {"class": "A|B|C", "reasons": [...], "summary": {...}}.
 
-C (Faris): any delete/replace; any non-guest (host-level) resource; protected VMIDs/bridges; pipeline/policy/keys paths; UniFi;
+C (Faris): any delete/replace; tests/*; template VMIDs; any non-guest (host-level) resource; protected VMIDs/bridges; pipeline/policy/keys paths; UniFi;
            stack code (terraform/stacks/**/*.tf: adding, changing or deleting a stack).
 B (Reviewer): modules, Ansible roles/playbooks, imports, updates to existing shr guests.
 A (auto): everything else (new guests, updates outside shr, docs).
@@ -13,7 +13,7 @@ import argparse, fnmatch, json, pathlib, yaml
 # terraform/stacks/*.tf = stack wiring (backend, providers, module call). Adding or deleting a stack adds or removes a
 # zone, and a deleted stack produces no plan at all (changed.py skips it), so it can never be judged from plans.
 C_PATHS = ["host/*", ".gitea/*", "policy/*", "scripts/*", "secrets/*", ".sops.yaml", "ansible/keys/*", "terraform/stacks/*/unifi/*",
-           "terraform/stacks/*.tf"]
+           "terraform/stacks/*.tf", "tests/*"]   # tests/*: the guest test contract (decision 32 D2)
 B_PATHS = ["terraform/modules/*", "ansible/roles/*", "ansible/playbooks/*", "ansible/ansible.cfg"]
 # Only guest resources can be A/B. Anything else the pipeline can touch with DevOpsAdmin (pools, cluster options,
 # storage, network, SDN, firewall, ACLs, files on the host, ...) is host-level and therefore Class C.
@@ -28,6 +28,7 @@ changed = json.load(open(a.changed))
 prot = yaml.safe_load(open(a.protected)) or {}
 pvmids = {int(v) for v in prot.get("vmids", {})}
 pbridges = set(prot.get("bridges", []))
+tlo, thi = prot.get("templates", [9000, 9199])   # templates are clone-only (decision 32 D5)
 
 reasons = {"A": [], "B": [], "C": []}
 summary = {"create": 0, "update": 0, "delete": 0, "replace": 0, "import": 0}
@@ -68,6 +69,8 @@ for pf in sorted(pathlib.Path(a.plans).glob("*.plan.json")):
             vmid = side.get("vm_id")
             if vmid is not None and int(vmid) in pvmids:
                 reasons["C"].append(f"protected VMID {vmid}: {addr}")
+            if vmid is not None and tlo <= int(vmid) <= thi:
+                reasons["C"].append(f"template VMID {vmid}: {addr}")
             for nic in side.get("network_interface") or []:
                 if nic.get("bridge") in pbridges:
                     reasons["C"].append(f"protected bridge {nic.get('bridge')}: {addr}")
