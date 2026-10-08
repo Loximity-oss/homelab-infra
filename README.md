@@ -18,9 +18,25 @@ ip: 192.168.70.10         # zone subnet; static band .10-.99
 cores: 1
 memory_mb: 1024
 disk_gb: 8
-owner: infra              # infra | sys | app | net | sre | faris
+owner: infra              # infra | cfg | net | sre | faris
 patch: ring1              # ring0 manual | ring1 auto Sev1/2 | ring2
-# optional: datastore (default lvmt-nvme01), description, swap_mb, nesting, env
+# optional: datastore (default lvmt-nvme01), description, swap_mb, nesting, env, keyctl
+```
+
+**VMs** (`type: vm`, module `vm-guests`, design-v7 decision 32): cloned in full from the protected template for `os`
+(`ubuntu2604` → 9000), cloud-init sets the hostname, static IP, root + `ansible/keys/*`. Sizing keys are optional:
+the baseline is **2 vCPU / 2048 MB / 16 GB on `lvmt-sata01`** (D6); set `cores`, `memory_mb`, `disk_gb`, `datastore`
+for the workload (Configuration Engineer). `disk_gb` ≥ 8 (template). `swap_mb`, `nesting`, `keyctl` are LXC-only.
+
+```yaml
+hostname: hm1-stg-tst02
+vmid: 813
+type: vm
+role: tst
+os: ubuntu2604
+ip: 192.168.76.12
+owner: infra
+patch: ring1
 ```
 
 Open a PR titled like `feat(shr): add dns01`. Prefix `WIP: ` to plan without merging.

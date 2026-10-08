@@ -33,15 +33,25 @@ locals {
   keys = [for f in sort(fileset("${path.module}/../../../../ansible/keys", "*.pub")) : trimspace(file("${path.module}/../../../../ansible/keys/${f}"))]
 }
 
+# type: lxc -> lxc-guests (module address kept as "guests" so existing state doesn't move); type: vm -> vm-guests.
 module "guests" {
   source          = "../../../modules/lxc-guests"
   zone            = local.zone
   zone_cfg        = local.zones.zones[local.zone]
   protected       = local.protected
-  specs           = local.specs
+  specs           = { for h, s in local.specs : h => s if try(s.type, "lxc") == "lxc" }
+  ssh_public_keys = local.keys
+}
+
+module "vms" {
+  source          = "../../../modules/vm-guests"
+  zone            = local.zone
+  zone_cfg        = local.zones.zones[local.zone]
+  protected       = local.protected
+  specs           = { for h, s in local.specs : h => s if try(s.type, "lxc") == "vm" }
   ssh_public_keys = local.keys
 }
 
 output "guests" {
-  value = module.guests.guests
+  value = merge(module.guests.guests, module.vms.guests)
 }
