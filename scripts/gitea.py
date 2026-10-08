@@ -6,6 +6,7 @@ Subcommands:
   review-request N USER     request a review
   automerge N SHA           merge when checks succeed (ci-merger)
   update-branch N           merge main into the PR branch
+  refresh-open [EXCEPT]     update every open, classified, non-WIP PR behind main (re-plan after main moved)
   pr-of-commit SHA          print "number head_sha" of the PR that produced a commit
   issue-upsert TITLE LABEL FILE   open or comment on an open issue with this title
 """
@@ -14,7 +15,7 @@ import json, os, sys, urllib.request, urllib.error
 S, R, T = os.environ["SERVER"].rstrip("/"), os.environ["REPO"], os.environ["GITEA_API_TOKEN"]
 
 
-def api(method, path, body=None, ok404=False):
+def api(method, path, body=None, ok404=False, ok_codes=()):
     req = urllib.request.Request(f"{S}/api/v1{path}", method=method,
                                  data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Authorization": f"token {T}", "Content-Type": "application/json"})
@@ -25,6 +26,8 @@ def api(method, path, body=None, ok404=False):
     except urllib.error.HTTPError as e:
         if ok404 and e.code == 404:
             return None
+        if e.code in ok_codes:
+            return {"_status": e.code, "_body": e.read().decode()[:300]}
         sys.exit(f"gitea {method} {path}: {e.code} {e.read().decode()[:300]}")
 
 
@@ -44,10 +47,24 @@ def main(cmd, *a):
     elif cmd == "review-request":
         api("POST", f"/repos/{R}/pulls/{a[0]}/requested_reviewers", {"reviewers": [a[1]]})
     elif cmd == "automerge":
-        api("POST", f"/repos/{R}/pulls/{a[0]}/merge",
-            {"Do": "merge", "head_commit_id": a[1], "merge_when_checks_succeed": True, "delete_branch_after_merge": True})
+        # 409 = already scheduled by an earlier run of this PR (re-plan after an update): keep that schedule.
+        r = api("POST", f"/repos/{R}/pulls/{a[0]}/merge",
+                {"Do": "merge", "head_commit_id": a[1], "merge_when_checks_succeed": True, "delete_branch_after_merge": True},
+                ok_codes=(409,))
+        if r and r.get("_status") == 409:
+            print(f"automerge: already scheduled ({r['_body'][:120]})")
     elif cmd == "update-branch":
         api("POST", f"/repos/{R}/pulls/{a[0]}/update?style=merge")
+    elif cmd == "refresh-open":
+        # A saved plan is only valid for the state it was made against. After an apply, every open planned PR is
+        # updated from main, which triggers a fresh plan (issue #26: stale plan after a parallel merge).
+        skip = a[0] if a else ""
+        for p in api("GET", f"/repos/{R}/pulls?state=open&limit=50"):
+            labels = [l["name"] for l in p.get("labels", [])]
+            if str(p["number"]) == skip or "wip" in labels or not any(l.startswith("class/") for l in labels):
+                continue
+            r = api("POST", f"/repos/{R}/pulls/{p['number']}/update?style=merge", ok_codes=(409, 422))
+            print(f"PR #{p['number']}: " + ("updated from main" if not r else f"not updated ({r['_status']}: {r['_body'][:100]})"))
     elif cmd == "pr-of-commit":
         pr = api("GET", f"/repos/{R}/commits/{a[0]}/pull", ok404=True)
         print(f"{pr['number']} {pr['head']['sha']}" if pr else "")

@@ -12,7 +12,9 @@ read -r PR HEAD_SHA <<<"$(python3 "$BASE/scripts/gitea.py" pr-of-commit "$SHA")"
 if [ -z "${PR:-}" ]; then echo "No PR for $SHA; nothing to apply."; exit 0; fi
 OUT="$PLANS/$HEAD_SHA"; W=$(mktemp -d); REPORT="$W/apply.md"; : > "$REPORT"
 note() { echo "$*" >> "$REPORT"; }
-finish() { python3 "$BASE/scripts/gitea.py" comment "$PR" "$REPORT"; exit "$1"; }
+finish() { python3 "$BASE/scripts/gitea.py" comment "$PR" "$REPORT"
+  python3 "$BASE/scripts/gitea.py" refresh-open "$PR" || true   # re-plan open PRs against the new state (#26)
+  exit "$1"; }
 export TF_VAR_standards_dir="$OUT/standards"
 [ -d "$TF_VAR_standards_dir" ] || { note "## ❌ Apply: no saved plan for \`$HEAD_SHA\`"; finish 1; }
 
