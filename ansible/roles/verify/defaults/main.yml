@@ -1,0 +1,7 @@
+# L3 runner (design-v7 decision 32). Results go to $VERIFY_OUT/<host>.l3.json on the runner; scripts/verify.py reads them.
+verify_out: "{{ lookup('env', 'VERIFY_OUT') | default('/tmp/verify', true) }}"
+verify_goss: "{{ lookup('file', playbook_dir + '/../../tests/goss.version') | from_yaml }}"
+verify_type: "{{ type | default('lxc') }}"
+verify_os: "{{ os | default('ubuntu2604') }}"
+verify_os_family: "{{ 'ubuntu' if verify_os.startswith('ubuntu') else verify_os }}"
+verify_max_used_pct: 85
