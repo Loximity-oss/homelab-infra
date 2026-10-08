@@ -55,7 +55,7 @@ for st in stacks:
         print(f"no plan json for {st}", file=sys.stderr)
         continue
     for rc in json.load(open(plan)).get("resource_changes", []):
-        if rc.get("type") != "proxmox_virtual_environment_container":
+        if rc.get("type") not in ("proxmox_virtual_environment_container", "proxmox_virtual_environment_vm"):
             continue
         if "create" not in (rc.get("change") or {}).get("actions", []):  # create, or replace (delete+create)
             continue
