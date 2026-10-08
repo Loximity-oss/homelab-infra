@@ -12,6 +12,6 @@
     - base_common
 
 - name: whoami test app
-  hosts: hm1-lab-web01
+  hosts: hm1-stg-web01
   roles:
     - app_whoami

@@ -3,6 +3,7 @@ locals {
   prefix          = split("/", var.zone_cfg.cidr)[1]
   protected_vmids = [for k, _ in try(var.protected.vmids, {}) : tonumber(k)]
   is_lab          = var.zone == "lab"
+  is_stg          = var.zone == "stg"
 
   guests = {
     for h, s in var.specs : h => merge(s, {
@@ -13,7 +14,7 @@ locals {
         "owner-${s.owner}",
         "os-${s.os}",
         "patch-${s.patch}",
-        "env-${try(s.env, local.is_lab ? "lab" : "prod")}",
+        "env-${try(s.env, local.is_lab ? "lab" : local.is_stg ? "staging" : "prod")}",
         try(s.keyctl, false) ? "feat-keyctl" : "",
       ])))
     })
