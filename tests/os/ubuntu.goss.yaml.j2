@@ -28,9 +28,12 @@ command:
     exit-status: 0
 {% endif %}
 {% if verify_type == 'vm' %}
+  # Exit 2 ("degraded done") only means recoverable warnings, e.g. Proxmox's cloud-init still writes the deprecated
+  # string 'user' key. Pass = done with no errors; deprecations are tolerated.
   l3-cloud-init-done:
-    exec: "cloud-init status"
-    stdout: ["status: done"]
+    exec: "cloud-init status --long; true"
+    exit-status: 0
+    stdout: ["/^status: done$/", "/^errors: \\[\\]$/"]
   l3-root-fs-grown:
     exec: "src=$(findmnt -no SOURCE /); dev=/dev/$(lsblk -no PKNAME \"$src\"); d=$(lsblk -bndo SIZE \"$dev\"); f=$(df -B1 --output=size / | tail -1 | tr -dc 0-9); echo \"disk $((d/1073741824))G fs $((f/1073741824))G\"; test $((d - f)) -le 2147483648"
     exit-status: 0
