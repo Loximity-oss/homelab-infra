@@ -5,6 +5,7 @@ source "$BASE/scripts/ci-lib.sh"
 bao_login ci-apply
 export GITEA_API_TOKEN; GITEA_API_TOKEN=$(secret plan gitea_ci_token)
 APPLY_TOKEN=$(secret apply pve_token_apply); PG_CONN=$(secret plan pg_conn)
+PLAN_PVE_TOKEN=$(secret plan pve_token_plan)   # read-only, for the L1 tests (decision 32)
 bao_logout
 
 read -r PR HEAD_SHA <<<"$(python3 "$BASE/scripts/gitea.py" pr-of-commit "$SHA")" || true
@@ -23,6 +24,34 @@ if ! PROXMOX_VE_API_TOKEN="$APPLY_TOKEN" python3 "$BASE/scripts/template-guard.p
   note "- ❌ **Template guard** — nothing applied"; note '```'; cat "$W/template-guard.txt" >> "$REPORT"; note '```'; finish 1
 fi
 note "- 🔒 $(tail -1 "$W/template-guard.txt")"
+
+# ---- Which guests this apply touches (decision 32): plan actions + hosts Ansible will configure.
+python3 "$BASE/scripts/plan_guests.py" "$OUT" "${STACKS[@]}" > "$W/plan-guests.json"
+HOSTS=$(INFRA_ROOT="$BASE" python3 - "$W/applied-changed.json" <<'PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["INFRA_ROOT"], "scripts"))
+from specs import load_specs
+c = json.load(open(sys.argv[1])); have = {s["hostname"] for s in load_specs()}
+print(",".join(sorted(have if c["ansible_all"] else set(c["hosts"]) & have)))
+PY
+)
+# Snapshot = existing guests that are updated or configured (not created/replaced/destroyed by this apply).
+SNAP_HOSTS=$(python3 - "$W/plan-guests.json" "$HOSTS" <<'PY'
+import json, sys
+g = json.load(open(sys.argv[1])); new = set(g["create"]) | set(g["replace"]) | {d["host"] for d in g["delete"]}
+print(",".join(sorted((set(g["update"]) | set(filter(None, sys.argv[2].split(",")))) - new)))
+PY
+)
+SNAP="pre-apply_$(date +%Y%m%d_%H%M)"; SNAPPED=""
+if [ -n "$SNAP_HOSTS" ]; then
+  if PROXMOX_VE_API_TOKEN="$APPLY_TOKEN" INFRA_ROOT="$BASE" python3 "$BASE/scripts/snapshot.py" take --name "$SNAP" --hosts "$SNAP_HOSTS" > "$W/snapshot.txt" 2>&1; then
+    note "- 📸 Snapshot \`$SNAP\` (kept 7 days): $SNAP_HOSTS"
+  else
+    note "- ⚠️ Snapshot \`$SNAP\` incomplete; no rollback for the hosts that failed:"; note '```'; cat "$W/snapshot.txt" >> "$REPORT"; note '```'
+  fi
+  SNAPPED=$(awk '$2=="ok"{print $1}' "$W/snapshot.txt" | paste -sd, -)
+fi
+FAILED=0
 for s in "${STACKS[@]}"; do
   n=$(stack_name "$s")
   [ -f "$OUT/$n.tfplan" ] || { note "- ❌ $n: saved plan missing"; finish 1; }
@@ -92,15 +121,7 @@ if [ ${#NEW_IPS[@]} -gt 0 ]; then
   note "- 🔑 Cleared old SSH host keys for created/replaced guest(s): ${NEW_IPS[*]}"
 fi
 
-# ---- Ansible: changed hosts that exist, or every host when ansible/ changed
-HOSTS=$(INFRA_ROOT="$BASE" python3 - "$W/applied-changed.json" <<'PY'
-import json, os, sys
-sys.path.insert(0, os.path.join(os.environ["INFRA_ROOT"], "scripts"))
-from specs import load_specs
-c = json.load(open(sys.argv[1])); have = {s["hostname"] for s in load_specs()}
-print(",".join(sorted(have if c["ansible_all"] else set(c["hosts"]) & have)))
-PY
-)
+# ---- Ansible: changed hosts that exist, or every host when ansible/ changed (HOSTS, computed above)
 if [ -n "$HOSTS" ]; then
   # v7: short-lived ci-apply token so base_common can write each new guest's admin password ONCE (create-only) to
   # OpenBao <zone>/secret/guests/<host>/<instance>; revoked right after the run.
@@ -110,9 +131,58 @@ if [ -n "$HOSTS" ]; then
   if [ $ok -eq 0 ]; then
     note "- ✅ Ansible: $HOSTS — $(grep -A20 'PLAY RECAP' "$W/ansible.log" | grep -c 'failed=0') host(s) ok"
   else
-    note "- ❌ **Ansible** on $HOSTS"; note '```'; tail -40 "$W/ansible.log" >> "$REPORT"; note '```'; finish 1
+    note "- ❌ **Ansible** on $HOSTS"; note '```'; tail -40 "$W/ansible.log" >> "$REPORT"; note '```'; FAILED=1
   fi
 else
   note "- No hosts to configure."
 fi
-finish 0
+# ---- Tests (decision 32): L1-L3 for created/changed/configured guests, "gone" for destroyed ones.
+# tests/ changed -> every guest is re-verified.
+read -r VHOSTS GONE <<<"$(INFRA_ROOT="$BASE" python3 - "$W/plan-guests.json" "$W/applied-changed.json" "$HOSTS" <<'PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["INFRA_ROOT"], "scripts"))
+from specs import load_specs
+g, c = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
+have = {s["hostname"] for s in load_specs()}
+v = set(g["create"]) | set(g["replace"]) | set(g["update"]) | set(filter(None, sys.argv[3].split(",")))
+if any(f.startswith("tests/") for f in c["files"]):
+    v = have
+gone = [f"{d['host']}:{d['vmid']}:{d['ip']}" for d in g["delete"] if d["host"] not in have]
+print((",".join(sorted(v & have)) or "-") + " " + (",".join(gone) or "-"))
+PY
+)"
+[ "$VHOSTS" = "-" ] && VHOSTS=""; [ "$GONE" = "-" ] && GONE=""
+if [ -n "$VHOSTS$GONE" ]; then
+  vok=0
+  PROXMOX_VE_API_TOKEN="$PLAN_PVE_TOKEN" INFRA_ROOT="$BASE" python3 "$BASE/scripts/verify.py" --standards "$TF_VAR_standards_dir" \
+    --hosts "$VHOSTS" --gone "$GONE" --out "$W/verify" > "$W/verify.log" 2>&1 || vok=$?
+  cp "$W/verify/verify.json" "$OUT/verify.json" 2>/dev/null || true
+  if [ -f "$W/verify/verify.md" ]; then note ""; note "### Tests"; cat "$W/verify/verify.md" >> "$REPORT"
+  else note "- ❌ **Tests** did not run"; note '```'; tail -20 "$W/verify.log" >> "$REPORT"; note '```'; vok=1; fi
+  if [ $vok -ne 0 ]; then
+    FAILED=1
+    # D3: auto-rollback only in stg, only failed guests that have this apply's snapshot; new guests are never destroyed.
+    RB=$(INFRA_ROOT="$BASE" python3 - "$W/verify/verify.json" "$SNAPPED" <<'PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["INFRA_ROOT"], "scripts"))
+from specs import load_specs
+zone = {s["hostname"]: s["_zone"] for s in load_specs()}
+try:
+    failed = {r["host"] for r in json.load(open(sys.argv[1]))["rows"] if r["status"] == "fail"}
+except Exception:
+    failed = set()
+print(",".join(sorted(h for h in failed & set(filter(None, sys.argv[2].split(","))) if zone.get(h) == "stg")))
+PY
+)
+    if [ -n "$RB" ]; then
+      PROXMOX_VE_API_TOKEN="$APPLY_TOKEN" INFRA_ROOT="$BASE" python3 "$BASE/scripts/snapshot.py" rollback --name "$SNAP" --hosts "$RB" > "$W/rollback.txt" 2>&1 || true
+      note ""; note "### ↩️ Auto-rollback (stg) to \`$SNAP\`"; note '```'; cat "$W/rollback.txt" >> "$REPORT"; note '```'
+      rok=0; PROXMOX_VE_API_TOKEN="$PLAN_PVE_TOKEN" INFRA_ROOT="$BASE" python3 "$BASE/scripts/verify.py" --standards "$TF_VAR_standards_dir" \
+        --hosts "$RB" --out "$W/verify-rb" > "$W/verify-rb.log" 2>&1 || rok=$?
+      note "Re-test after rollback: $([ $rok -eq 0 ] && echo '✅ green' || echo '❌ still failing')"
+      [ -f "$W/verify-rb/verify.md" ] && cat "$W/verify-rb/verify.md" >> "$REPORT"
+      note "The merged change is still on main: fix it forward or revert it by PR."
+    fi
+  fi
+fi
+[ $FAILED -eq 0 ] && finish 0 || finish 1

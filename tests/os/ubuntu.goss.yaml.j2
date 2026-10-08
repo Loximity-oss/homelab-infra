@@ -1,0 +1,51 @@
+# L3 OS baseline for {{ inventory_hostname }} ({{ verify_type }}, {{ verify_os }}). Rendered by ansible/roles/verify.
+# Checks only what base_common configures (design-v7 decision 32). Values come from group_vars; never secrets.
+command:
+  l3-timezone:
+    exec: "timedatectl show -p Timezone --value"
+    exit-status: 0
+    stdout: ["{{ timezone }}"]
+  l3-hostname:
+    exec: "hostname"
+    exit-status: 0
+    stdout: ["/^{{ inventory_hostname }}$/"]
+  l3-no-failed-units:
+    exec: "f=$(systemctl list-units --state=failed --no-legend --plain); echo \"failed: ${f:-none}\"; test -z \"$f\""
+    exit-status: 0
+  l3-disk-free:
+    exec: "p=$(df --output=pcent / | tail -1 | tr -dc 0-9); echo \"used ${p}%\"; test \"$p\" -le {{ verify_max_used_pct }}"
+    exit-status: 0
+  l3-inodes-free:
+    exec: "p=$(df --output=ipcent / | tail -1 | tr -dc 0-9); echo \"inodes used ${p}%\"; test \"$p\" -le {{ verify_max_used_pct }}"
+    exit-status: 0
+  l3-time-synced:
+    exec: "timedatectl show -p NTPSynchronized --value"
+    exit-status: 0
+    stdout: ["yes"]
+{% if keyctl | default(false) %}
+  l3-keyctl:
+    exec: "python3 -c \"import ctypes,sys; sys.exit(0 if ctypes.CDLL(None, use_errno=True).syscall(250, 0, -3, 0) >= 0 else 1)\""
+    exit-status: 0
+{% endif %}
+{% if verify_type == 'vm' %}
+  l3-cloud-init-done:
+    exec: "cloud-init status"
+    stdout: ["status: done"]
+  l3-root-fs-grown:
+    exec: "src=$(findmnt -no SOURCE /); dev=/dev/$(lsblk -no PKNAME \"$src\"); d=$(lsblk -bndo SIZE \"$dev\"); f=$(df -B1 --output=size / | tail -1 | tr -dc 0-9); echo \"disk $((d/1073741824))G fs $((f/1073741824))G\"; test $((d - f)) -le 2147483648"
+    exit-status: 0
+{% endif %}
+package:
+{% for p in base_packages %}
+  {{ p }}:
+    installed: true
+{% endfor %}
+file:
+  /etc/hm1/admin-secret-stored:
+    exists: true
+    filetype: file
+{% if verify_type == 'vm' %}
+service:
+  qemu-guest-agent:
+    running: true
+{% endif %}

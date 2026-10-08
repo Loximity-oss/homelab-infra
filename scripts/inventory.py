@@ -10,7 +10,7 @@ def add(group, host):
     inv.setdefault(group, {"hosts": []})["hosts"].append(host)
 for s in load_specs():
     h = s["hostname"]
-    inv["_meta"]["hostvars"][h] = {"ansible_host": s["ip"], "vmid": s["vmid"], "zone": s["_zone"], "role": s["role"], "keyctl": bool(s.get("keyctl", False)), "type": s.get("type", "lxc")}
+    inv["_meta"]["hostvars"][h] = {"ansible_host": s["ip"], "vmid": s["vmid"], "zone": s["_zone"], "role": s["role"], "keyctl": bool(s.get("keyctl", False)), "type": s.get("type", "lxc"), "os": s["os"]}
     for g in (f"site_{s['_site']}", f"zone_{s['_zone']}", f"role_{s['role']}", f"os_{s['os']}", f"patch_{s['patch']}", f"owner_{s['owner']}"):
         add(g, h)
 inv["all"]["children"] = sorted(k for k in inv if k not in ("_meta", "all"))

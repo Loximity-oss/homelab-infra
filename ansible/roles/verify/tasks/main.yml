@@ -1,0 +1,46 @@
+- name: Pinned Goss on the runner matches tests/goss.version
+  ansible.builtin.stat:
+    path: "/opt/goss/{{ verify_goss.version }}/goss"
+    checksum_algorithm: sha256
+  register: verify_goss_local
+  delegate_to: localhost
+  run_once: true
+
+- name: Goss checksum
+  ansible.builtin.assert:
+    that:
+      - verify_goss_local.stat.exists
+      - verify_goss_local.stat.checksum == verify_goss.binary_sha256
+    fail_msg: "/opt/goss/{{ verify_goss.version }}/goss missing or not the pinned build (rebuild/v7/devops/05-goss.sh)"
+  run_once: true
+
+- name: Goss on the guest
+  ansible.builtin.copy:
+    src: "/opt/goss/{{ verify_goss.version }}/goss"
+    dest: /usr/local/bin/goss
+    mode: "0755"
+
+- name: Test directory
+  ansible.builtin.file:
+    path: /etc/hm1/goss
+    state: directory
+    mode: "0750"
+
+- name: OS baseline tests
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../../tests/os/{{ verify_os_family }}.goss.yaml.j2"
+    dest: /etc/hm1/goss/baseline.yaml
+    mode: "0640"
+
+- name: Run (L3)
+  ansible.builtin.command: /usr/local/bin/goss -g /etc/hm1/goss/baseline.yaml validate --format json --no-color
+  register: verify_l3
+  changed_when: false
+  failed_when: false
+
+- name: Results to the runner
+  ansible.builtin.copy:
+    content: "{{ verify_l3.stdout if verify_l3.stdout | length > 0 else ({'error': verify_l3.stderr | default('no output')} | to_json) }}"
+    dest: "{{ verify_out }}/{{ inventory_hostname }}.l3.json"
+    mode: "0640"
+  delegate_to: localhost

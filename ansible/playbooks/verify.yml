@@ -1,0 +1,6 @@
+# L3 OS baseline on guests (design-v7 decision 32). Run by scripts/verify.py; never changes configuration.
+- name: Verify
+  hosts: all
+  gather_facts: false
+  roles:
+    - verify
