@@ -6,10 +6,13 @@ This broker does exactly one thing on the pipeline's behalf: an LXC tagged `feat
   - refuses protected VMIDs, VMIDs outside guest-zone blocks, privileged containers, and anything on vmbr0
   - a stopped container it just fixed is started (new guests are created stopped when keyctl is requested)
   - a running container without keyctl is fixed and rebooted once
+  - ARP announce (issue #28): a pipeline guest (tag mgd-tf) that started in the last 15 minutes pings its own gateway
+    once per boot (LXC: pct exec, VM: guest agent), so the core switch replaces a stale ARP entry left by an earlier
+    guest with the same IP (replace / re-create). Nothing else is run inside guests.
   - never touches anything else; every action is logged to the journal (tag pve-feature-broker)
 Config: /etc/pve-feature-broker.json. Source: homelab-infra host/pve-feature-broker/ (Class C); installed by root.
 """
-import json, subprocess, syslog
+import json, os, re, subprocess, syslog, time
 
 CONF = json.load(open("/etc/pve-feature-broker.json"))
 syslog.openlog("pve-feature-broker")
@@ -25,6 +28,51 @@ def log(msg):
 
 
 res = json.loads(sh("pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json"))
+STATE = "/run/pve-feature-broker"
+os.makedirs(STATE, exist_ok=True)
+
+
+def announce(r):
+    """Guest pings its gateway once per boot (first 15 min) -> fresh ARP entry on the router for its IP."""
+    vmid, node, kind = int(r["vmid"]), r["node"], r.get("type")
+    if r.get("status") != "running" or int(r.get("uptime") or 0) > 900 or kind not in ("lxc", "qemu"):
+        return
+    if vmid in CONF["protected"] or not any(lo <= vmid <= hi for lo, hi in CONF["ranges"]):
+        return
+    if "mgd-tf" not in (r.get("tags") or "").split(";"):
+        return
+    boot = int(r.get("uptime") or 0)
+    mark = f"{STATE}/announced-{vmid}"
+    try:
+        last = float(open(mark).read())
+    except (OSError, ValueError):
+        last = 0
+    started = time.time() - boot
+    if last >= started - 5:
+        return  # already announced for this boot
+    cfg = json.loads(sh("pvesh", "get", f"/nodes/{node}/{kind}/{vmid}/config", "--output-format", "json"))
+    if any("bridge=vmbr0" in str(v) for k, v in cfg.items() if k.startswith("net")):
+        return
+    src = cfg.get("net0", "") if kind == "lxc" else cfg.get("ipconfig0", "")
+    m = re.search(r"gw=([0-9.]+)", src)
+    if not m:
+        return
+    gw = m.group(1)
+    cmd = ["pct", "exec", str(vmid), "--", "ping", "-c", "1", "-W", "2", gw] if kind == "lxc" else \
+          ["qm", "guest", "exec", str(vmid), "--timeout", "10", "--", "ping", "-c", "1", "-W", "2", gw]
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if p.returncode == 0 or kind == "lxc":
+        open(mark, "w").write(str(time.time()))
+        log(f"{vmid} {r.get('name')}: ARP announce (ping {gw}) rc={p.returncode}")
+    # VM whose agent isn't up yet: retried next minute
+
+
+for r in res:
+    try:
+        announce(r)
+    except Exception as e:  # never break the keyctl part
+        log(f"{r.get('vmid')}: announce skipped: {e}")
+
 for r in res:
     tags = (r.get("tags") or "").split(";")
     if r.get("type") != "lxc" or CONF["tag"] not in tags:

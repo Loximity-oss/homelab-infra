@@ -14,3 +14,9 @@ nesting), so a narrow root helper on the host does them on the pipeline's behalf
 Ansible (waiting for SSH up to 5 min) continues. The broker refuses protected VMIDs, VMIDs outside guest-zone blocks,
 privileged containers and vmbr0. Changing anything here is Class C; root installs it (it is not deployed automatically).
 Log: `journalctl -t pve-feature-broker`.
+
+**ARP announce (issue #28):** a guest that re-uses an IP (replace, re-create) is unreachable until the core switch's ARP
+entry for that IP expires, because a fresh guest sends nothing on its own. Within a minute of a pipeline guest
+(`mgd-tf`) starting, the broker makes it ping its own gateway once per boot (LXC: `pct exec`, VM: guest agent), which
+refreshes the entry. Only guests in guest-zone VMID blocks, never protected ones or vmbr0; logged like the rest.
+
