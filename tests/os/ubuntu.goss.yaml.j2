@@ -11,8 +11,7 @@ command:
     stdout: ["/^{{ inventory_hostname }}$/"]
   l3-no-failed-units:
     exec: "f=$(systemctl list-units --state=failed --no-legend --plain | awk '{print $1}' | paste -sd' '); echo \"failed: ${f:-none}\"; test -z \"$f\""
-    exit-status: 0
-    stdout: ["failed: none"]   # on failure the evidence names the units
+    exit-status: 0   # on failure verify.py names the units in the evidence
   l3-disk-free:
     exec: "p=$(df --output=pcent / | tail -1 | tr -dc 0-9); echo \"used ${p}%\"; test \"$p\" -le {{ verify_max_used_pct }}"
     exit-status: 0
