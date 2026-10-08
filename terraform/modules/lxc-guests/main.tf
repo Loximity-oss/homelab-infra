@@ -2,6 +2,7 @@
 locals {
   prefix          = split("/", var.zone_cfg.cidr)[1]
   protected_vmids = [for k, _ in try(var.protected.vmids, {}) : tonumber(k)]
+  template_range  = try(var.protected.templates, [9000, 9199])
   is_stg          = var.zone == "stg"
 
   guests = {
@@ -92,6 +93,10 @@ resource "proxmox_virtual_environment_container" "guest" {
     precondition {
       condition     = !contains(local.protected_vmids, each.value.vmid)
       error_message = "VMID ${each.value.vmid} is protected (homelab-standards/protected.yaml)."
+    }
+    precondition {
+      condition     = each.value.vmid < local.template_range[0] || each.value.vmid > local.template_range[1]
+      error_message = "VMID ${each.value.vmid} is in the template range (protected.yaml templates); templates are never managed."
     }
     precondition {
       condition     = !contains(try(var.protected.bridges, []), var.zone_cfg.bridge)
