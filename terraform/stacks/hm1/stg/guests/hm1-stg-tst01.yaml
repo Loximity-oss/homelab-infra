@@ -1,5 +1,5 @@
 hostname: hm1-stg-tst01
-vmid: 812
+vmid: 814
 type: lxc
 role: tst
 os: ubuntu2604
@@ -9,4 +9,4 @@ memory_mb: 1536
 disk_gb: 8
 owner: infra
 patch: ring1
-description: CD acceptance test guest (LXC) - throwaway; A4 rollback test
+description: CD acceptance test guest (LXC) - throwaway; A6 replace (812 -> 814)
