@@ -2,7 +2,6 @@
 locals {
   prefix          = split("/", var.zone_cfg.cidr)[1]
   protected_vmids = [for k, _ in try(var.protected.vmids, {}) : tonumber(k)]
-  is_lab          = var.zone == "lab"
   is_stg          = var.zone == "stg"
 
   guests = {
@@ -10,11 +9,11 @@ locals {
       tags = sort(distinct(compact([
         "zone-${var.zone}",
         "role-${s.role}",
-        local.is_lab ? "mgd-lab" : "mgd-tf",
+        "mgd-tf",
         "owner-${s.owner}",
         "os-${s.os}",
         "patch-${s.patch}",
-        "env-${try(s.env, local.is_lab ? "lab" : local.is_stg ? "staging" : "prod")}",
+        "env-${try(s.env, local.is_stg ? "staging" : "prod")}",
         try(s.keyctl, false) ? "feat-keyctl" : "",
       ])))
     })

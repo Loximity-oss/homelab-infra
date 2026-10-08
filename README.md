@@ -14,7 +14,7 @@ vmid: 301                 # inside the zone block (shr = 300-399); 100/300 prote
 type: lxc
 role: dns                 # naming/roles.yaml
 os: ubuntu2604
-ip: 192.168.70.10         # zone subnet; static band .10-.99 (lab: int .240-.254)
+ip: 192.168.70.10         # zone subnet; static band .10-.99
 cores: 1
 memory_mb: 1024
 disk_gb: 8
@@ -44,7 +44,7 @@ Network, VLAN, gateway, pool and tags come from the zone (homelab-standards `nam
 
 ```
 terraform/modules/lxc-guests/      guest module (bpg/proxmox)
-terraform/stacks/hm1/<zone>/       one stack + state schema per zone (dmz, shr, int, lab)
+terraform/stacks/hm1/<zone>/       one stack + state schema per zone (dmz, shr, int, stg)
   guests/<hostname>.yaml           guest specs
 ansible/                           base_common role, site.yml; inventory = scripts/inventory.py (from specs)
 ansible/keys/*.pub                 SSH keys injected into every guest
