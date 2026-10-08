@@ -1,0 +1,26 @@
+name: verify
+# Nightly guest verification (design-v7 decision 32, T4): L1-L3 for every guest, one issue per failing host,
+# prune pre-apply_* snapshots older than 7 days. Runs on the apply runner (only it has the guest SSH key).
+on:
+  schedule:
+    - cron: "0 19 * * *" # 03:00 MYT, after drift (02:30)
+  workflow_dispatch:
+    inputs:
+      host:
+        description: "One hostname (empty = every guest)"
+        required: false
+        default: ""
+jobs:
+  verify:
+    runs-on: host-apply
+    steps:
+      - name: verify guests, prune snapshots
+        env:
+          GIT_TOKEN: ${{ gitea.token }}
+          SERVER: ${{ gitea.server_url }}
+          REPO: ${{ gitea.repository }}
+          HOST: ${{ inputs.host }}
+        run: |
+          rm -rf base
+          git clone -q "${SERVER%%://*}://ci:${GIT_TOKEN}@${SERVER#*://}/${REPO}.git" base
+          bash base/scripts/ci-verify.sh

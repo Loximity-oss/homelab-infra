@@ -9,6 +9,7 @@ Subcommands:
   refresh-open [EXCEPT]     update every open, classified, non-WIP PR behind main (re-plan after main moved)
   pr-of-commit SHA          print "number head_sha" of the PR that produced a commit
   issue-upsert TITLE LABEL FILE   open or comment on an open issue with this title
+  issue-close TITLE TEXT    comment and close the open issue with this title (if any)
 """
 import json, os, sys, urllib.request, urllib.error
 
@@ -68,6 +69,11 @@ def main(cmd, *a):
     elif cmd == "pr-of-commit":
         pr = api("GET", f"/repos/{R}/commits/{a[0]}/pull", ok404=True)
         print(f"{pr['number']} {pr['head']['sha']}" if pr else "")
+    elif cmd == "issue-close":
+        for i in api("GET", f"/repos/{R}/issues?state=open&type=issues&limit=50"):
+            if i["title"] == a[0]:
+                api("POST", f"/repos/{R}/issues/{i['number']}/comments", {"body": a[1]})
+                api("PATCH", f"/repos/{R}/issues/{i['number']}", {"state": "closed"})
     elif cmd == "issue-upsert":
         title, label, body = a[0], a[1], open(a[2]).read()
         for i in api("GET", f"/repos/{R}/issues?state=open&type=issues&limit=50"):

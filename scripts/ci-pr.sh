@@ -38,6 +38,7 @@ run_check tf-safety bash "$BASE/scripts/tf-safety.sh" "$HEAD_DIR"
 run_check terraform-fmt terraform fmt -check -recursive -diff "$HEAD_DIR/terraform"
 run_check yamllint yamllint -d relaxed "$HEAD_DIR/terraform/stacks" "$HEAD_DIR/ansible" "$HEAD_DIR/.gitea"
 run_check gitleaks gitleaks dir "$HEAD_DIR" --no-banner --redact
+run_check tests python3 "$BASE/scripts/tests-check.py" "$HEAD_DIR"   # static: renders + checks Goss structure, never runs it (#27)
 
 # ---- plan changed stacks
 (cd "$HEAD_DIR" && python3 "$BASE/scripts/changed.py" "$MAIN" "$HEAD_SHA") > "$OUT/changed.json"
