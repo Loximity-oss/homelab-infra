@@ -1,7 +1,7 @@
 # AdGuard Home in Docker (host network), config rendered from apps/adguard/. Same config on every role_dns guest.
-- name: Docker engine
+- name: Docker engine and dig
   ansible.builtin.apt:
-    name: [docker.io, docker-compose-v2]
+    name: [docker.io, docker-compose-v2, bind9-dnsutils]
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -26,7 +26,6 @@
       token=lookup('env', 'GUEST_SECRET_TOKEN')).secret }}"
   no_log: true
   delegate_to: localhost
-  become: false
 
 - name: Stack
   ansible.builtin.template:
