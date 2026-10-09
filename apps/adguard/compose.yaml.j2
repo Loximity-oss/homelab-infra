@@ -1,0 +1,12 @@
+# Rendered by ansible/roles/app_adguard to {{ app_adguard_dir }}/compose.yaml
+# Host network: real client IPs in the query log; DNS binds only to {{ ansible_host }} and 127.0.0.1 (see AdGuardHome.yaml),
+# so the systemd-resolved stub on 127.0.0.53 does not conflict.
+services:
+  adguardhome:
+    image: "{{ app_adguard_image }}"
+    container_name: adguardhome
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - {{ app_adguard_dir }}/work:/opt/adguardhome/work
+      - {{ app_adguard_dir }}/conf:/opt/adguardhome/conf

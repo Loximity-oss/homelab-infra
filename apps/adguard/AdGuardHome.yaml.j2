@@ -1,0 +1,36 @@
+# Rendered by ansible/roles/app_adguard (seed). Identical on every DNS guest except the bind address.
+http:
+  address: {{ ansible_host }}:{{ app_adguard_web_port }}
+users:
+  - name: {{ _adguard_secret.admin_user }}
+    password: "{{ _adguard_secret.admin_password | password_hash('bcrypt', salt=app_adguard_bcrypt_salt, ident='2b') }}"
+language: en
+dns:
+  bind_hosts:
+    - {{ ansible_host }}
+    - 127.0.0.1
+  port: 53
+  upstream_dns:
+{% for u in app_adguard_upstreams %}
+    - {{ u }}
+{% endfor %}
+  upstream_mode: load_balance
+  bootstrap_dns:
+{% for b in app_adguard_bootstrap %}
+    - {{ b }}
+{% endfor %}
+  cache_size: 4194304
+  cache_optimistic: true
+  ratelimit: 0
+filtering:
+  filtering_enabled: true
+  protection_enabled: true
+  filters_update_interval: 24
+filters:
+{% for f in app_adguard_filters %}
+  - enabled: true
+    url: {{ f.url }}
+    name: {{ f.name }}
+    id: {{ f.id }}
+{% endfor %}
+schema_version: 28

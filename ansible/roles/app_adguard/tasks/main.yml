@@ -1,0 +1,76 @@
+# AdGuard Home in Docker (host network), config rendered from apps/adguard/. Same config on every role_dns guest.
+- name: Docker engine
+  ansible.builtin.apt:
+    name: [docker.io, docker-compose-v2]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 600
+
+- name: Directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+  loop:
+    - "{{ app_adguard_dir }}"
+    - "{{ app_adguard_dir }}/conf"
+    - "{{ app_adguard_dir }}/work"
+
+- name: Admin credentials from OpenBao (runner side)
+  ansible.builtin.set_fact:
+    _adguard_secret: "{{ lookup('community.hashi_vault.vault_kv2_get', 'apps/adguard',
+      engine_mount_point=('secret' if lookup('env', 'BAO_ZONE_MODE') != 'mount' else 'secret-' ~ zone),
+      url=app_adguard_bao_url, ca_cert='/etc/openbao/ca.crt',
+      namespace=(zone if lookup('env', 'BAO_ZONE_MODE') != 'mount' else omit),
+      token=lookup('env', 'GUEST_SECRET_TOKEN')).secret }}"
+  no_log: true
+  delegate_to: localhost
+  become: false
+
+- name: Stack
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../../apps/adguard/compose.yaml.j2"
+    dest: "{{ app_adguard_dir }}/compose.yaml"
+    mode: "0640"
+  notify: restart adguard
+
+- name: Config seed (copied to conf/ by the handler only when it changes)
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../../apps/adguard/AdGuardHome.yaml.j2"
+    dest: "{{ app_adguard_dir }}/AdGuardHome.seed.yaml"
+    mode: "0600"
+  no_log: true
+  notify: apply adguard config
+
+- name: First run has a config
+  ansible.builtin.copy:
+    src: "{{ app_adguard_dir }}/AdGuardHome.seed.yaml"
+    dest: "{{ app_adguard_dir }}/conf/AdGuardHome.yaml"
+    remote_src: true
+    force: false
+    mode: "0600"
+
+- name: Apply pending handlers before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Running
+  ansible.builtin.command: docker compose -f {{ app_adguard_dir }}/compose.yaml up -d
+  register: _adguard_up
+  changed_when: "'Started' in _adguard_up.stderr or 'Created' in _adguard_up.stderr"
+
+- name: Healthcheck, web UI
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:{{ app_adguard_web_port }}/login.html"
+  register: _hc
+  retries: 10
+  delay: 3
+  until: _hc.status == 200
+
+- name: Healthcheck, DNS answers on port 53
+  ansible.builtin.command: "dig +short +time=3 +tries=1 @{{ ansible_host }} example.com A"
+  register: _dig
+  changed_when: false
+  retries: 5
+  delay: 3
+  until: _dig.stdout | length > 0

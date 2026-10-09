@@ -1,0 +1,17 @@
+app_adguard_image: adguard/adguardhome:v0.107.79
+app_adguard_dir: /opt/adguard
+app_adguard_web_port: 3000
+# Both resolvers get the same upstreams and filters (config as code), so either one can be the sole resolver.
+app_adguard_upstreams:
+  - https://dns.quad9.net/dns-query
+  - https://cloudflare-dns.com/dns-query
+app_adguard_bootstrap:
+  - 9.9.9.9
+  - 1.1.1.1
+app_adguard_filters:
+  - {id: 1, name: AdGuard DNS filter, url: "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"}
+  - {id: 2, name: AdAway Default Blocklist, url: "https://adguardteam.github.io/HostlistsRegistry/assets/filter_2.txt"}
+# Secret (OpenBao <zone>/secret/apps/adguard: admin_user, admin_password). Token: see tasks.
+app_adguard_bao_url: "https://192.168.70.12:8200"
+# Fixed bcrypt salt so the rendered hash is stable and the config does not change on every run.
+app_adguard_bcrypt_salt: hm1adguardhomesalt000e

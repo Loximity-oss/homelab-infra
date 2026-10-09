@@ -1,0 +1,11 @@
+- name: apply adguard config
+  ansible.builtin.copy:
+    src: "{{ app_adguard_dir }}/AdGuardHome.seed.yaml"
+    dest: "{{ app_adguard_dir }}/conf/AdGuardHome.yaml"
+    remote_src: true
+    mode: "0600"
+  notify: restart adguard
+
+- name: restart adguard
+  ansible.builtin.command: docker compose -f {{ app_adguard_dir }}/compose.yaml up -d --force-recreate
+  changed_when: true
