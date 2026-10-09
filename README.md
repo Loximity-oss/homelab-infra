@@ -60,7 +60,7 @@ Network, VLAN, gateway, pool and tags come from the zone (homelab-standards `nam
 
 ```
 terraform/modules/lxc-guests/      guest module (bpg/proxmox)
-terraform/stacks/hm1/<zone>/       one stack + state schema per zone (dmz, shr, int, stg)
+terraform/stacks/hm1/<zone>/       one stack + state schema per zone (dmz, shr, int, stg, wifi)
   guests/<hostname>.yaml           guest specs
 ansible/                           base_common role, site.yml; inventory = scripts/inventory.py (from specs)
 ansible/keys/*.pub                 SSH keys injected into every guest
