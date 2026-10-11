@@ -1,0 +1,13 @@
+hostname: hm1-iot-dns01
+vmid: 601
+type: lxc
+role: dns
+os: ubuntu2604
+ip: 192.168.74.10
+cores: 2
+memory_mb: 1024
+disk_gb: 8
+datastore: lvmt-sata01
+owner: faris
+patch: ring1
+description: AdGuard Home DNS for IoT clients (1 of 2)
