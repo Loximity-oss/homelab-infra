@@ -10,4 +10,4 @@ disk_gb: 8
 datastore: lvmt-sata01
 owner: faris
 patch: ring1
-description: AdGuard Home DNS for IoT clients (1 of 2)
+description: AdGuard Home DNS for IoT clients (1 of 2) - configured after the UniFi SSH rule
