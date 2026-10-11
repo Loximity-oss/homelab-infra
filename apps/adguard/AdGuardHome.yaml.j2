@@ -1,0 +1,37 @@
+# Managed by Ansible (role app_adguard). Edits made in the UI are overwritten on the next change of this template.
+schema_version: 34
+http:
+  address: 0.0.0.0:{{ app_adguard_http_port }}
+  session_ttl: 720h
+users:
+  - name: {{ app_adguard_admin_user }}
+    password: '{{ _adguard_admin_hash }}'
+dns:
+  bind_hosts:
+    - 0.0.0.0
+  port: {{ app_adguard_dns_port }}
+  upstream_mode: parallel
+  upstream_dns:
+{% for u in app_adguard_upstreams %}
+    - {{ u }}
+{% endfor %}
+  bootstrap_dns:
+{% for b in app_adguard_bootstrap %}
+    - {{ b }}
+{% endfor %}
+  cache_enabled: true
+  cache_size: {{ app_adguard_cache_size }}
+querylog:
+  enabled: true
+  file_enabled: true
+  interval: {{ app_adguard_querylog_interval }}
+statistics:
+  enabled: true
+  interval: 168h
+filtering:
+  filtering_enabled: true
+filters:
+  - enabled: true
+    url: https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
+    name: AdGuard DNS filter
+    id: 1

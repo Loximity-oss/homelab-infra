@@ -1,0 +1,18 @@
+app_adguard_version: v0.107.79
+app_adguard_sha256: c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f
+app_adguard_url: "https://github.com/AdguardTeam/AdGuardHome/releases/download/{{ app_adguard_version }}/AdGuardHome_linux_amd64.tar.gz"
+app_adguard_dir: /opt/AdGuardHome
+app_adguard_user: adguard
+app_adguard_admin_user: admin
+app_adguard_http_port: 3000
+app_adguard_dns_port: 53
+app_adguard_upstreams:
+  - https://cloudflare-dns.com/dns-query
+  - https://dns.quad9.net/dns-query
+app_adguard_bootstrap:
+  - 1.1.1.1
+  - 9.9.9.9
+app_adguard_cache_size: 4194304
+app_adguard_querylog_interval: 168h
+# bcrypt hash of the admin password; kept root-only on the guest so later runs re-render the same hash
+app_adguard_hash_file: /etc/hm1/adguard-admin.hash
