@@ -2,9 +2,11 @@ app_adguard_version: v0.107.79
 app_adguard_sha256: c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f
 app_adguard_url: "https://github.com/AdguardTeam/AdGuardHome/releases/download/{{ app_adguard_version }}/AdGuardHome_linux_amd64.tar.gz"
 app_adguard_dir: /opt/AdGuardHome
+# writable by the service user: live config (AdGuard rewrites it atomically, so it needs the directory) and managed copy
+app_adguard_conf_dir: "{{ app_adguard_dir }}/conf"
 app_adguard_user: adguard
 app_adguard_admin_user: admin
-app_adguard_http_port: 3000
+app_adguard_http_port: 80
 app_adguard_dns_port: 53
 app_adguard_upstreams:
   - https://cloudflare-dns.com/dns-query

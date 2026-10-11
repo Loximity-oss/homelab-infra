@@ -41,7 +41,7 @@
 - name: Apply resolved change now
   ansible.builtin.meta: flush_handlers
 
-# ---- Binary
+# ---- Binary. Install dir and binary are root-owned; the service user can only write conf/ and data/.
 - name: Service user
   ansible.builtin.user:
     name: "{{ app_adguard_user }}"
@@ -49,19 +49,24 @@
     shell: /usr/sbin/nologin
     create_home: false
 
-- name: Install directory
+- name: Install directory (root-owned, group may traverse)
   ansible.builtin.file:
     path: "{{ app_adguard_dir }}"
     state: directory
-    owner: "{{ app_adguard_user }}"
+    owner: root
+    group: "{{ app_adguard_user }}"
     mode: "0750"
 
-- name: Work directory
+- name: Writable directories for the service
   ansible.builtin.file:
-    path: "{{ app_adguard_dir }}/data"
+    path: "{{ item }}"
     state: directory
     owner: "{{ app_adguard_user }}"
+    group: "{{ app_adguard_user }}"
     mode: "0750"
+  loop:
+    - "{{ app_adguard_conf_dir }}"
+    - "{{ app_adguard_dir }}/data"
 
 - name: Installed version
   ansible.builtin.command: "{{ app_adguard_dir }}/AdGuardHome --version"
@@ -69,24 +74,38 @@
   failed_when: false
   changed_when: false
 
-- name: Download release (sha256 pinned)
-  ansible.builtin.get_url:
-    url: "{{ app_adguard_url }}"
-    dest: "/var/cache/AdGuardHome-{{ app_adguard_version }}.tar.gz"
-    checksum: "sha256:{{ app_adguard_sha256 }}"
-    mode: "0644"
+- name: Download, unpack and install the binary
   when: app_adguard_version not in (_adguard_ver.stdout | default(''))
+  block:
+    - name: Download release (sha256 pinned)
+      ansible.builtin.get_url:
+        url: "{{ app_adguard_url }}"
+        dest: "/var/cache/AdGuardHome-{{ app_adguard_version }}.tar.gz"
+        checksum: "sha256:{{ app_adguard_sha256 }}"
+        mode: "0644"
 
-- name: Unpack binary
-  ansible.builtin.unarchive:
-    src: "/var/cache/AdGuardHome-{{ app_adguard_version }}.tar.gz"
-    dest: "{{ app_adguard_dir }}"
-    remote_src: true
-    extra_opts: [--strip-components=1]
-    include: [AdGuardHome/AdGuardHome]
-    mode: "0755"
-  when: app_adguard_version not in (_adguard_ver.stdout | default(''))
-  notify: restart adguardhome
+    - name: Staging directory
+      ansible.builtin.file:
+        path: "/var/cache/AdGuardHome-{{ app_adguard_version }}"
+        state: directory
+        mode: "0755"
+
+    # Unpacked whole into a staging dir: no dependency on the member-name prefix (AdGuardHome/ vs ./AdGuardHome/).
+    - name: Unpack release
+      ansible.builtin.unarchive:
+        src: "/var/cache/AdGuardHome-{{ app_adguard_version }}.tar.gz"
+        dest: "/var/cache/AdGuardHome-{{ app_adguard_version }}"
+        remote_src: true
+
+    - name: Install binary
+      ansible.builtin.copy:
+        src: "/var/cache/AdGuardHome-{{ app_adguard_version }}/AdGuardHome/AdGuardHome"
+        dest: "{{ app_adguard_dir }}/AdGuardHome"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      notify: restart adguardhome
 
 # ---- Admin password: generated once per guest. OpenBao first (create-only, cas=0, never read back), then the
 # bcrypt hash only goes to the guest. The hash file doubles as the "done" marker.
@@ -143,32 +162,58 @@
     _adguard_admin_hash: "{{ _adguard_hash_raw.content | b64decode | trim }}"
   no_log: true
 
-# ---- Config. AdGuard rewrites its own YAML (defaults, migrations), so the rendered copy is compared and the live
-# file is only replaced when the rendered copy changes (no restart on every run).
+# ---- Config. AdGuard rewrites its own YAML (defaults, migrations, UI edits), so the rendered copy is kept as
+# AdGuardHome.yaml.managed and the live file is only replaced when the managed copy differs from the copy that
+# was last installed (.applied marker, written only after a successful install). A failed run therefore retries.
 - name: Render config
   ansible.builtin.template:
     src: "{{ playbook_dir }}/../../apps/adguard/AdGuardHome.yaml.j2"
-    dest: "{{ app_adguard_dir }}/AdGuardHome.yaml.managed"
+    dest: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.managed"
     owner: "{{ app_adguard_user }}"
+    group: "{{ app_adguard_user }}"
     mode: "0600"
   no_log: true
-  register: _adguard_cfg
+
+- name: Managed config checksum
+  ansible.builtin.stat:
+    path: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.managed"
+    checksum_algorithm: sha256
+  register: _adguard_managed
+
+- name: Last installed config checksum
+  ansible.builtin.stat:
+    path: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.applied"
+    checksum_algorithm: sha256
+  register: _adguard_applied
 
 - name: Live config present
   ansible.builtin.stat:
-    path: "{{ app_adguard_dir }}/AdGuardHome.yaml"
+    path: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml"
   register: _adguard_live
 
 - name: Install config
   ansible.builtin.copy:
-    src: "{{ app_adguard_dir }}/AdGuardHome.yaml.managed"
-    dest: "{{ app_adguard_dir }}/AdGuardHome.yaml"
+    src: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.managed"
+    dest: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml"
     remote_src: true
     owner: "{{ app_adguard_user }}"
+    group: "{{ app_adguard_user }}"
     mode: "0600"
-  when: _adguard_cfg.changed or not _adguard_live.stat.exists
+  when: >-
+    not _adguard_live.stat.exists or not _adguard_applied.stat.exists or
+    _adguard_applied.stat.checksum != _adguard_managed.stat.checksum
   no_log: true
   notify: restart adguardhome
+
+- name: Record installed config
+  ansible.builtin.copy:
+    src: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.managed"
+    dest: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.applied"
+    remote_src: true
+    owner: "{{ app_adguard_user }}"
+    group: "{{ app_adguard_user }}"
+    mode: "0600"
+  no_log: true
 
 # ---- Service
 - name: Systemd unit
