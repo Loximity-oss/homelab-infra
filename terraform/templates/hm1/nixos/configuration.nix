@@ -1,6 +1,6 @@
-# NixOS template configuration for 9003 (tpl-nixos2605-base). Built by scripts/template-build.py with
-# nixos-generators --format qcow, which provides the disk layout and the boot loader. Requirements: docs/apps/vm-templates.md.
-# Changing this file is Class C and rebuilds 9003.
+# NixOS template configuration for 9003 (tpl-nixos2605-base). Built by scripts/template-build.py with nixpkgs' own
+# image builder (config.system.build.images.qemu), which provides the disk layout and the boot loader.
+# Requirements: docs/apps/vm-templates.md. Changing this file is Class C and rebuilds 9003.
 { config, pkgs, lib, ... }:
 {
   boot.kernelParams = [ "console=ttyS0,115200" "console=tty0" ];

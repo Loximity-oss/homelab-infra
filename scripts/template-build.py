@@ -33,7 +33,7 @@ HEX40, HEX64, FPR = re.compile(r"^[0-9a-f]{40}$"), re.compile(r"^[0-9a-f]{64}$")
 TOP_KEYS = {"name", "vmid", "os", "description", "source", "settings", "seal", "seal_user", "provision", "refresh",
             "refresh_check"}
 SOURCE_KEYS = {"image": {"kind", "url", "version", "sha256", "signature"},
-               "nixos-build": {"kind", "version", "config", "nixpkgs_rev", "generators_rev"}}
+               "nixos-build": {"kind", "version", "config", "nixpkgs_rev"}}
 SETTING_KEYS = {"cores", "memory_mb", "datastore", "cpu"}
 REFRESH = {"weekly", "monthly", "quarterly", "release"}
 SEAL_STEPS = [  # hygiene before `template` (docs/apps/vm-templates.md); run after every spec's provision steps
@@ -154,9 +154,8 @@ def check_spec(p, infra, std):
             cfg = str(src.get("config") or "")
             if not cfg.startswith("terraform/templates/") or not pathlib.Path(infra, cfg).is_file():
                 e("source.config must be a file under terraform/templates/")
-            for k in ("nixpkgs_rev", "generators_rev"):
-                if not HEX40.match(str(src.get(k) or "")):
-                    e(f"source.{k} must be a pinned 40-hex git commit")
+            if not HEX40.match(str(src.get("nixpkgs_rev") or "")):
+                e("source.nixpkgs_rev must be a pinned 40-hex git commit")
     st = s.get("settings") or {}
     if not isinstance(st, dict) or set(st) - SETTING_KEYS:
         e(f"settings may only set {sorted(SETTING_KEYS)} (disk is fixed at {DISK_GB}G)")
@@ -406,6 +405,8 @@ def poweroff(pve, vmid, key, ip, user):
 
 # ---------------------------------------------------------------- build steps
 def nixos_image(pve, spec, infra, lc, net, key, pub, work, report):
+    """NixOS qcow2 from nixpkgs' own image builder (config.system.build.images.qemu) at the pinned nixpkgs_rev,
+    built in a throwaway stg VM cloned from 9000 (nix-community/nixos-generators is archived since 2026-01-30)."""
     src, b = spec["source"], lc["scratch"][0]
     ds = (spec.get("settings") or {}).get("datastore", DEFAULT_DS)
     pve.do("POST", pve.qm(BASE_TEMPLATE, "/clone"), {"newid": b, "full": 1, "name": "tplbuild-nixos", "storage": ds,
@@ -418,19 +419,16 @@ def nixos_image(pve, spec, infra, lc, net, key, pub, work, report):
     wait_ssh(key, ip)
     run(["scp", "-i", key, *SSH_OPTS, pathlib.Path(infra, src["config"]), f"root@{ip}:/root/configuration.nix"])
     ssh(key, ip, "cloud-init status --wait >/dev/null 2>&1; export DEBIAN_FRONTEND=noninteractive; "
-                 "apt-get update -q && apt-get install -yq nix-bin git", timeout=1800)
-    ssh(key, ip, "nix --extra-experimental-features 'nix-command flakes' run "
-                 f"github:nix-community/nixos-generators/{src['generators_rev']} -- --format qcow "
-                 f"--configuration /root/configuration.nix "
-                 f"-I nixpkgs=https://github.com/NixOS/nixpkgs/archive/{src['nixpkgs_rev']}.tar.gz --out-link /root/out",
-        timeout=7200)
+                 "apt-get update -q && apt-get install -yq nix-bin", timeout=1800)
+    ssh(key, ip, "nix-build '<nixpkgs/nixos>' -A config.system.build.images.qemu "
+                 f"-I nixpkgs=https://github.com/NixOS/nixpkgs/archive/{src['nixpkgs_rev']}.tar.gz "
+                 "-I nixos-config=/root/configuration.nix -o /root/out", timeout=7200)
     ssh(key, ip, "cp -L \"$(find -L /root/out -name '*.qcow2' | head -1)\" /root/nixos.qcow2", timeout=600)
     img = work / "nixos.qcow2"
     run(["scp", "-i", key, *SSH_OPTS, f"root@{ip}:/root/nixos.qcow2", img], timeout=3600)
     destroy(pve, b)
     sha = sha256_file(img)
-    report(f"nixos image built in stg VM {b}: nixpkgs {src['nixpkgs_rev'][:12]}, generators "
-           f"{src['generators_rev'][:12]}, sha256 {sha}")
+    report(f"nixos image built in stg VM {b}: nixpkgs {src['nixpkgs_rev'][:12]} (images.qemu), sha256 {sha}")
     return img, sha
 
 
@@ -583,7 +581,7 @@ def build_one(pve, rel, infra, std, lc, report):
         pve.do("POST", pve.qm(cand, "/template"))
         verify(pve, cand, vfy, ds, net, key, pub, report)
         replace(pve, cand, target, spec, ds, desc, store, report)
-        report(set_tags(pve, target, spec["os"], lc.get("mgd_tag", "tmp")))
+        report(set_tags(pve, target, spec["os"], lc.get("mgd_tag", "tpl")))
         destroy(pve, cand)
         prune(pve, target, store)
     finally:

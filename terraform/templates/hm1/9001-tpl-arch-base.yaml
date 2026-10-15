@@ -1,16 +1,17 @@
 # VM template spec (docs/templates.md; homelab-standards PR #17). Built by the `template` workflow after merge.
-# TODO before merge: pin url, version and sha256 from the vendor's .SHA256 file for one dated image; optionally add
-# signature (.sig + Arch cloud-image signing key under terraform/templates/keys/). `template-build.py check` rejects
-# the placeholders below until then.
+# url/version/sha256 fetched via WebFetch by the Configuration Engineer (2026-10-15), not verified by oc-infra:
+# the builder re-verifies (download sha256 must equal this pin, PVE re-checks at upload).
+# No signature block: the Arch cloud-image signing key fingerprint is unverified (follow-up, Class C: key under
+# terraform/templates/keys/ + signature {url: <url>.sig, type: detached, ...}).
 name: tpl-arch-base
 vmid: 9001
 os: arch
 description: Arch Linux cloud image (rolling) + cloud-init, qemu-guest-agent, python
 source:
   kind: image
-  url: https://geo.mirror.pkgbuild.com/images/v<YYYYMMDD>.<build>/Arch-Linux-x86_64-cloudimg-<YYYYMMDD>.<build>.qcow2
-  version: "<YYYYMMDD>.<build>"
-  sha256: null
+  url: https://geo.mirror.pkgbuild.com/images/v20261001.604814/Arch-Linux-x86_64-cloudimg-20261001.604814.qcow2
+  version: "20261001.604814"
+  sha256: 360f0fa49db6813bdc8e35bed230a2dc2ae3567b7b5ab74719c0a706e4e34e87
 settings: {}
 seal: ssh
 seal_user: arch   # image default user (sudo); root login is enabled by the provision steps below

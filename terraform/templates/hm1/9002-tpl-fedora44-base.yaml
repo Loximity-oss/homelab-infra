@@ -1,15 +1,17 @@
 # VM template spec (docs/templates.md; homelab-standards PR #17). Built by the `template` workflow after merge.
-# TODO before merge: exact image file name (<build>) and sha256 from the signed Fedora-Cloud-44-<build>-x86_64-CHECKSUM;
-# optionally signature {type: clearsigned-checksum, key: terraform/templates/keys/fedora-44.asc, fingerprint}.
+# url/version/sha256 fetched via WebFetch by the Configuration Engineer (2026-10-15) from the PGP-clearsigned
+# Fedora-Cloud-44-1.7-x86_64-CHECKSUM, not verified by oc-infra: the builder re-verifies the sha256.
+# No signature block: the Fedora 44 key fingerprint is unverified (the one found showed a 2025 expiry). Follow-up,
+# Class C: key under terraform/templates/keys/ + signature {type: clearsigned-checksum, url: <CHECKSUM url>, ...}.
 name: tpl-fedora44-base
 vmid: 9002
 os: fedora44
 description: Fedora 44 Cloud Base Generic + cloud-init, qemu-guest-agent, python3
 source:
   kind: image
-  url: https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-<build>.x86_64.qcow2
-  version: "44-<build>"
-  sha256: null
+  url: https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2
+  version: "44-1.7"
+  sha256: 28680fe5b371a5a82ebf43a31926e086a168e59949d03969c5093e7071f90b7f
 settings: {}
 seal: ssh
 seal_user: fedora   # image default user (sudo); root login is enabled by the provision steps below
