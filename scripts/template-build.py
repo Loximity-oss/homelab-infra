@@ -425,7 +425,9 @@ def nixos_image(pve, spec, infra, lc, net, key, pub, work, report):
     wait_alloc(pve, b)
     pve.do("POST", pve.qm(BASE_TEMPLATE, "/clone"), {"newid": b, "full": 1, "name": "tplbuild-nixos", "storage": ds,
                                                     "description": MARK})
-    pve.call("PUT", pve.qm(b, "/config"), {"cores": 4, "memory": 8192})
+    # cpu host: nixpkgs images.qemu builds the disk inside a VM and needs /dev/kvm (nested KVM is on: kvm_intel
+    # nested=Y). Only this throwaway build VM; candidates and templates keep x86-64-v2-AES (template run 231).
+    pve.call("PUT", pve.qm(b, "/config"), {"cores": 4, "memory": 8192, "cpu": "host"})
     boot_cfg(pve, b, net, pub)
     pve.do("PUT", pve.qm(b, "/resize"), {"disk": "scsi0", "size": "40G"})
     pve.do("POST", pve.qm(b, "/status/start"))
