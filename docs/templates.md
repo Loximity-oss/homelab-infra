@@ -109,5 +109,9 @@ The build result is posted as a comment on the PR. A deleted spec retires its te
   is gone, restore the pre-replace vzdump in `dir-import01`.
 - **Audit**: the PR records who, why and the pin. The PR comment records each step. PVE tasks run as
   `svc-tpl-build@pve`. The template description records spec path, git sha, image sha256 and date.
-- **Rebuild without a change**: dispatch the `template` workflow with `spec`. Only people with repo write access can
-  do this; agents have no tool for it.
+- **Rebuild without a change**: dispatch the `template` workflow with `spec` (Gitea UI, or the OpenClaw PM's
+  `build_template(spec)`; any agent can read results with `template_status`). One spec per run.
+- **Replace is disabled for now**: the builder refuses a spec whose VMID already exists, because PVE drops the
+  VMID's ACLs when the old template is destroyed and nothing re-applies them yet. After every build, root re-applies
+  the scratch ACLs: `for i in 9990 9991 9992; do pveum acl modify /vms/$i --users svc-tpl-build@pve --tokens
+  'svc-tpl-build@pve!pipeline' --roles DevOpsTemplateBuild; done`.
