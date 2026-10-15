@@ -1,0 +1,33 @@
+name: template
+# VM template builds (homelab-standards PR #17, docs/templates.md). The workflow and scripts come from main; a PR head
+# never runs here. Runner host-template (user runner-template, AppRole ci-template, token svc-tpl-build@pve!pipeline).
+on:
+  push:
+    branches: [main]
+    paths: ["terraform/templates/**"]
+  schedule:
+    - cron: "0 20 * * 0" # Mon 04:00 MYT: refresh check (upstream checksums vs pinned sha256; no PVE access)
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: "Rebuild one merged spec (terraform/templates/hm1/<vmid>-<name>.yaml); empty = refresh check"
+        required: false
+        default: ""
+jobs:
+  template:
+    runs-on: host-template
+    steps:
+      - name: build templates or refresh check
+        env:
+          GIT_TOKEN: ${{ gitea.token }}
+          SERVER: ${{ gitea.server_url }}
+          REPO: ${{ gitea.repository }}
+          SHA: ${{ gitea.sha }}
+          EVENT: ${{ gitea.event_name }}
+          SPEC: ${{ inputs.spec }}
+          MODE: ${{ gitea.event_name == 'schedule' && 'refresh-check' || 'build' }}
+        run: |
+          rm -rf base
+          git clone -q "${SERVER%%://*}://ci:${GIT_TOKEN}@${SERVER#*://}/${REPO}.git" base
+          git -C base checkout -q "$SHA"
+          bash base/scripts/ci-template.sh

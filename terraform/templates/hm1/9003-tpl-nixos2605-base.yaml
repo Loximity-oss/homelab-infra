@@ -1,0 +1,18 @@
+# VM template spec (docs/templates.md; homelab-standards PR #17). Faris decision 6: built by the pipeline in a
+# throwaway stg VM (clone of 9000) with nixpkgs' own image builder (config.system.build.images.qemu) from the pinned
+# nixpkgs_rev, then sealed with one ssh boot in stg. nix-community/nixos-generators is archived (2026-01-30), not used.
+# nixpkgs_rev fetched via WebFetch by the Configuration Engineer (nixos-26.05.11829.a033e66ab94a, release-26.05 head
+# 2026-10-13), not verified by oc-infra; the image sha256 is computed at build and recorded in the PR comment.
+name: tpl-nixos2605-base
+vmid: 9003
+os: nixos
+description: NixOS 26.05 (nixpkgs images.qemu) + cloud-init, qemu-guest-agent, python3
+source:
+  kind: nixos-build
+  version: "26.05"
+  config: terraform/templates/hm1/nixos/configuration.nix
+  nixpkgs_rev: a033e66ab94a6bedf2c3d58d93a36319d3cbbbaf
+settings: {}
+seal: ssh          # hygiene + boot check only: the configuration is declarative, so no provision steps
+provision: []
+refresh: monthly   # bump nixpkgs_rev on release-26.05 = minor refresh (Class B)

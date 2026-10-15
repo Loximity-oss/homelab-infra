@@ -16,4 +16,10 @@ jobs:
           rm -rf base
           git clone -q "${SERVER%%://*}://ci:${GIT_TOKEN}@${SERVER#*://}/${REPO}.git" base
           git -C base checkout -q "$SHA"
-          bash base/scripts/ci-apply.sh
+          # Shared lock with template builds (standards PR #17): no guest clones a template while it is replaced.
+          # Without the lock dir no template build can run either (ci-template.sh fails closed), so no lock is needed.
+          if [ -d /var/lib/devops/locks ]; then
+            flock -s -w 3600 /var/lib/devops/locks/templates.lock bash base/scripts/ci-apply.sh
+          else
+            bash base/scripts/ci-apply.sh
+          fi

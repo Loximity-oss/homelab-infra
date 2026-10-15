@@ -39,6 +39,7 @@ run_check terraform-fmt terraform fmt -check -recursive -diff "$HEAD_DIR/terrafo
 run_check yamllint yamllint -d relaxed "$HEAD_DIR/terraform/stacks" "$HEAD_DIR/ansible" "$HEAD_DIR/.gitea"
 run_check gitleaks gitleaks dir "$HEAD_DIR" --no-banner --redact
 run_check tests python3 "$BASE/scripts/tests-check.py" "$HEAD_DIR"   # static: renders + checks Goss structure, never runs it (#27)
+run_check templates python3 "$BASE/scripts/template-build.py" check "$HEAD_DIR" "$OUT/standards"   # offline spec validation (standards #17)
 
 # ---- plan changed stacks
 (cd "$HEAD_DIR" && python3 "$BASE/scripts/changed.py" "$MAIN" "$HEAD_SHA") > "$OUT/changed.json"
@@ -66,7 +67,9 @@ if [ $fail -ne 0 ]; then
   { echo "## ❌ Checks failed"; echo; cat "$REPORT"; } > "$OUT/comment.md"
   python3 "$BASE/scripts/gitea.py" comment "$PR" "$OUT/comment.md"; exit 1
 fi
-python3 "$BASE/policy/classify.py" --changed "$OUT/changed.json" --plans "$OUT" --protected "$OUT/standards/protected.yaml" > "$OUT/class.json"
+# --base-dir/--head-dir: template specs are judged by content (minor refresh = B, standards PR #17); $BASE is main here.
+python3 "$BASE/policy/classify.py" --changed "$OUT/changed.json" --plans "$OUT" --protected "$OUT/standards/protected.yaml" \
+  --base-dir "$BASE" --head-dir "$HEAD_DIR" > "$OUT/class.json"
 CLASS=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["class"])' "$OUT/class.json")
 WIP=""; case "$TITLE" in WIP*) WIP=wip;; esac
 python3 "$BASE/scripts/gitea.py" labels "$PR" "class/$CLASS${WIP:+,wip}"
