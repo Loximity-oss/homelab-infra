@@ -1,2 +1,4 @@
 timezone: Asia/Kuala_Lumpur
 base_packages: [curl, ca-certificates, vim, htop, jq, unzip, gnupg, python3-apt]
+# Arch: no python3-apt; python is the interpreter package.
+base_packages_arch: [curl, ca-certificates, vim, htop, jq, unzip, gnupg, python]
