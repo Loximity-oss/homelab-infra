@@ -1,9 +1,15 @@
 # NixOS template configuration for 9003 (tpl-nixos2605-base). Built by scripts/template-build.py with nixpkgs' own
 # image builder (config.system.build.images.qemu), which provides the disk layout and the boot loader.
 # Requirements: docs/apps/vm-templates.md. Changing this file is Class C and rebuilds 9003.
-{ config, pkgs, lib, ... }:
+{ config, pkgs, lib, modulesPath, ... }:
 {
-  boot.kernelParams = [ "console=ttyS0,115200" "console=tty0" ];
+  # virtio drivers (virtio_pci, virtio_scsi, virtio_blk, ...) in the initrd: the Proxmox disk is virtio-scsi and
+  # virtio_scsi is a module, not built in. Without this the initrd never finds root and hangs (template run 251).
+  imports = [ (modulesPath + "/profiles/qemu-guest.nix") ];
+
+  # the last console= is /dev/console: ttyS0 last so stage-1/systemd output reaches the Proxmox serial console
+  # (serial0 socket, vga serial0); with tty0 last the run-251 hang showed nothing after GRUB.
+  boot.kernelParams = [ "console=tty0" "console=ttyS0,115200" ];
   boot.growPartition = true;
 
   services.cloud-init = {
