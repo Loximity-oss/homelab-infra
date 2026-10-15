@@ -336,7 +336,8 @@ class Pve:
 
     def upload(self, store, path, filename, sha):
         b = uuid.uuid4().hex
-        fields = {"content": "import", "checksum": sha, "checksum-algorithm": "sha256"}
+        # PVE rejects the upload (400) unless checksum-algorithm comes before checksum in the form (dry run 2026-10-15)
+        fields = {"content": "import", "checksum-algorithm": "sha256", "checksum": sha}
         pre = "".join(f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n' for k, v in fields.items())
         pre += (f'--{b}\r\nContent-Disposition: form-data; name="filename"; filename="{filename}"\r\n'
                 "Content-Type: application/octet-stream\r\n\r\n")
@@ -360,8 +361,19 @@ class Pve:
 def destroy(pve, vmid):
     if pve.status(vmid) == "running":
         pve.do("POST", pve.qm(vmid, "/status/stop"))
-    # Never purge=1: purge also removes the VMID's ACL entries (the per-VMID builder / clone-only apply ACLs).
+    # PVE drops the VMID's ACL entries on every destroy, purge or not (dry run 2026-10-15); pve-feature-broker
+    # (root, every minute) re-applies them. Anything that reuses this VMID first calls wait_alloc().
     pve.do("DELETE", pve.qm(vmid, "?destroy-unreferenced-disks=1"))
+
+
+def wait_alloc(pve, vmid, timeout=300):
+    end = time.time() + timeout
+    while time.time() < end:
+        if (pve.call("GET", f"/access/permissions?path=/vms/{vmid}") or {}).get(f"/vms/{vmid}", {}).get("VM.Allocate"):
+            return
+        time.sleep(10)
+    raise Fail(f"no VM.Allocate on /vms/{vmid} after {timeout}s: pve-feature-broker has not re-applied the template "
+               "ACLs (root: systemctl status pve-feature-broker.timer)")
 
 
 def clean_scratch(pve, lc):
@@ -381,8 +393,9 @@ def boot_cfg(pve, vmid, net, pub, user="root"):
 
 
 def unboot_cfg(pve, vmid):
-    pve.call("PUT", pve.qm(vmid, "/config"), {"delete": "ciuser,sshkeys,ipconfig0,nameserver",
-                                              "net0": f"virtio,bridge={BRIDGE}"})
+    # net0 keeps bridge vmbr1 + the stg VLAN tag: untagged vmbr1 would need SDN.Use on the whole bridge (all VLANs),
+    # and every guest apply sets its own NIC/VLAN anyway.
+    pve.call("PUT", pve.qm(vmid, "/config"), {"delete": "ciuser,sshkeys,ipconfig0,nameserver"})
 
 
 def disk_bytes(val):
@@ -409,6 +422,7 @@ def nixos_image(pve, spec, infra, lc, net, key, pub, work, report):
     built in a throwaway stg VM cloned from 9000 (nix-community/nixos-generators is archived since 2026-01-30)."""
     src, b = spec["source"], lc["scratch"][0]
     ds = (spec.get("settings") or {}).get("datastore", DEFAULT_DS)
+    wait_alloc(pve, b)
     pve.do("POST", pve.qm(BASE_TEMPLATE, "/clone"), {"newid": b, "full": 1, "name": "tplbuild-nixos", "storage": ds,
                                                     "description": MARK})
     pve.call("PUT", pve.qm(b, "/config"), {"cores": 4, "memory": 8192})
@@ -433,6 +447,7 @@ def nixos_image(pve, spec, infra, lc, net, key, pub, work, report):
 
 
 def verify(pve, cand, vfy, ds, net, key, pub, report):
+    wait_alloc(pve, vfy)
     pve.do("POST", pve.qm(cand, "/clone"), {"newid": vfy, "full": 1, "name": "tplverify", "storage": ds,
                                            "description": MARK})
     boot_cfg(pve, vfy, net, pub)
@@ -477,6 +492,7 @@ def replace(pve, cand, target, spec, ds, desc, store, report):
         old = backup(pve, target, store, report)
         destroy(pve, target)
     try:
+        wait_alloc(pve, target)
         pve.do("POST", pve.qm(cand, "/clone"), {"newid": target, "full": 1, "name": spec["name"], "storage": ds,
                                                "description": desc})
         pve.do("POST", pve.qm(target, "/template"))
@@ -485,7 +501,12 @@ def replace(pve, cand, target, spec, ds, desc, store, report):
             report(f"⚠️ replace failed ({x}); restoring {target} from `{old}`")
             if target in pve.vmids():
                 destroy(pve, target)
-            pve.do("POST", f"/nodes/{NODE}/qemu", {"vmid": target, "archive": old, "storage": ds})
+            try:
+                wait_alloc(pve, target)
+                pve.do("POST", f"/nodes/{NODE}/qemu", {"vmid": target, "archive": old, "storage": ds})
+            except Fail as y:
+                report(f"❌ restore failed ({y}). Root: `qmrestore {old} {target} --storage {ds} && qm template {target}`")
+                raise
             report(f"restored {target} from `{old}`")
         raise
 
@@ -500,12 +521,18 @@ def set_tags(pve, vmid, os_, mgd):
                 f"Root one-off: `qm set {vmid} --tags '{tags}'`")
 
 
-def prune(pve, vmid, store, keep=2):
+def prune(pve, vmid, store, report, keep=2):
+    """Best effort: deleting volumes needs Datastore.Allocate, which the builder does not get (it would also allow
+    editing the storage itself). pve-feature-broker prunes as root to the same keep count."""
     for kind in ("import", "backup"):
         mine = [c for c in pve.content(store, kind)
                 if (c["volid"].split("/")[-1].startswith(f"{vmid}-") if kind == "import" else str(c.get("vmid")) == str(vmid))]
         for c in sorted(mine, key=lambda c: c.get("ctime", 0))[:-keep]:
-            pve.do("DELETE", f"/nodes/{NODE}/storage/{store}/content/{urllib.parse.quote(c['volid'], safe='')}")
+            try:
+                pve.do("DELETE", f"/nodes/{NODE}/storage/{store}/content/{urllib.parse.quote(c['volid'], safe='')}")
+            except Fail:
+                report(f"prune: `{c['volid']}` left for pve-feature-broker (root)")
+                return
 
 
 def guard_vmids(std, lc, *vmids):
@@ -552,6 +579,7 @@ def build_one(pve, rel, infra, std, lc, report):
             img, sha = nixos_image(pve, spec, infra, lc, net, key, pub, work, report)
             vol = f"{target}-{sha[:16]}.qcow2"
             pve.upload(store, img, vol, sha)
+        wait_alloc(pve, cand)
         desc = (f"{spec.get('description') or spec['name']}\nBuilt by the homelab-infra template pipeline from "
                 f"{rel} @ {os.environ.get('SHA', '?')[:12]}; image sha256 {sha}; {time.strftime('%Y-%m-%d')}; "
                 "svc-tpl-build. Clone-only for the apply token (decision 32 D5).")
@@ -560,7 +588,7 @@ def build_one(pve, rel, infra, std, lc, report):
             "machine": "q35", "cores": st.get("cores", 2), "memory": st.get("memory_mb", 2048),
             "cpu": st.get("cpu", "x86-64-v2-AES"), "scsihw": "virtio-scsi-single",
             "agent": "enabled=1,fstrim_cloned_disks=1", "serial0": "socket", "vga": "serial0",
-            "net0": f"virtio,bridge={BRIDGE}", "ide2": f"{ds}:cloudinit", "boot": "order=scsi0",
+            "net0": f"virtio,bridge={BRIDGE},tag={net['vlan']}", "ide2": f"{ds}:cloudinit", "boot": "order=scsi0",
             "scsi0": f"{ds}:0,import-from={store}:import/{vol},discard=on,iothread=1,ssd=1"})
         size = disk_bytes(pve.config(cand).get("scsi0"))
         if size > DISK_GB << 30:
@@ -583,7 +611,7 @@ def build_one(pve, rel, infra, std, lc, report):
         replace(pve, cand, target, spec, ds, desc, store, report)
         report(set_tags(pve, target, spec["os"], lc.get("mgd_tag", "tpl")))
         destroy(pve, cand)
-        prune(pve, target, store)
+        prune(pve, target, store, report)
     finally:
         try:
             clean_scratch(pve, lc)
