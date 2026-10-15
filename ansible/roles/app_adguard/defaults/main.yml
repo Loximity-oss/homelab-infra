@@ -17,4 +17,5 @@ app_adguard_bootstrap:
 app_adguard_cache_size: 4194304
 app_adguard_querylog_interval: 168h
 # bcrypt hash of the admin password; kept root-only on the guest so later runs re-render the same hash
+# (the plaintext password is generated at apply and written create-only to OpenBao apps/adguard/<host>)
 app_adguard_hash_file: /etc/hm1/adguard-admin.hash
