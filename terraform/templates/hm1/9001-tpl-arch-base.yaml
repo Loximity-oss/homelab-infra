@@ -1,0 +1,27 @@
+# VM template spec (docs/templates.md; homelab-standards PR #17). Built by the `template` workflow after merge.
+# url/version/sha256 fetched via WebFetch by the Configuration Engineer (2026-10-15), not verified by oc-infra:
+# the builder re-verifies (download sha256 must equal this pin, PVE re-checks at upload).
+# No signature block: the Arch cloud-image signing key fingerprint is unverified (follow-up, Class C: key under
+# terraform/templates/keys/ + signature {url: <url>.sig, type: detached, ...}).
+name: tpl-arch-base
+vmid: 9001
+os: arch
+description: Arch Linux cloud image (rolling) + cloud-init, qemu-guest-agent, python
+source:
+  kind: image
+  url: https://geo.mirror.pkgbuild.com/images/v20261001.604814/Arch-Linux-x86_64-cloudimg-20261001.604814.qcow2
+  version: "20261001.604814"
+  sha256: 360f0fa49db6813bdc8e35bed230a2dc2ae3567b7b5ab74719c0a706e4e34e87
+settings: {}
+seal: ssh
+seal_user: arch   # image default user (sudo); root login is enabled by the provision steps below
+provision:
+  - pacman -Sy --noconfirm --needed archlinux-keyring && pacman -Syu --noconfirm --needed python qemu-guest-agent openssh cloud-init cloud-guest-utils
+  - for u in sshd qemu-guest-agent cloud-init-local cloud-init-main cloud-init-network cloud-init cloud-config cloud-final systemd-networkd systemd-resolved; do systemctl cat "$u.service" >/dev/null 2>&1 && systemctl enable "$u.service"; done; true
+  - printf 'disable_root: false\n' > /etc/cloud/cloud.cfg.d/90-hm1-root.cfg
+  - printf 'PermitRootLogin prohibit-password\nPasswordAuthentication no\n' > /etc/ssh/sshd_config.d/10-hm1.conf
+  - grep -q 'console=ttyS0' /etc/default/grub || { sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="/&console=tty0 console=ttyS0,115200 /' /etc/default/grub && grub-mkconfig -o /boot/grub/grub.cfg; }
+refresh: monthly
+refresh_check:
+  checksum_url: https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2.SHA256
+  match: '^Arch-Linux-x86_64-cloudimg.*\.qcow2$'
