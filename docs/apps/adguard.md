@@ -22,7 +22,7 @@
 - Inventory: hosts come from the guest specs (`scripts/inventory.py`); the play targets `hm1-iot-dns01,hm1-iot-dns02` by name (both also in group `role_dns`).
 
 ## Prerequisite (merge gate)
-The first apply writes `iot/secret/data/apps/adguard/<hostname>`. The ci-apply OpenBao policy must allow create on `iot/secret/apps/adguard/*`; this is a separate Class C standards PR (infrastructure-engineer). **This PR must not merge before that policy is applied**, otherwise the first apply fails at "Write once to OpenBao".
+The first apply writes `iot/secret/data/apps/adguard/<hostname>`. The ci-apply OpenBao policy must allow create on `iot/secret/apps/adguard/*`. This is done in homelab-standards #15 (merged, Class C): `openbao/policies/ci-apply.hcl` allows create-only on `+/secret/data/apps/adguard/*`. Merging that PR is not enough: the policy takes effect only after Faris has refreshed `/root/v7/openbao` on CT 303 and run `./apply.sh` (a dry run should show only `policy ci-apply: differs`). Confirm that was done before the first AdGuard apply, otherwise it fails at "Write once to OpenBao" with a 403.
 
 ## Open points
 - No backup of query log/stats (A-1). The UniFi DHCP/DNS settings for iot clients (point to .10/.11) are a network-engineer task.
