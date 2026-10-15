@@ -66,9 +66,12 @@ variable "min_disk_gb" {
 }
 
 variable "vm_templates" {
-  description = "os tag value -> template VMID (protected, clone-only)."
+  description = "os tag value -> template VMID (protected, clone-only). 9001-9003 are reserved; the templates are not built yet (host-level step, Faris)."
   type        = map(number)
   default = {
     ubuntu2604 = 9000
+    arch       = 9001
+    fedora44   = 9002
+    nixos      = 9003
   }
 }
