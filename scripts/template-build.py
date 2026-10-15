@@ -403,11 +403,11 @@ def disk_bytes(val):
     return int(m[1]) * {"": 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30, "T": 1 << 40}[m[2]] if m else 0
 
 
-def poweroff(pve, vmid, key, ip, user):
-    cmd = "nohup sh -c 'sleep 2; systemctl poweroff' >/dev/null 2>&1 &"
-    if user != "root":
-        cmd = "sudo -n " + cmd
-    subprocess.run(["ssh", "-i", str(key), *SSH_OPTS, f"{user}@{ip}", cmd], capture_output=True, timeout=30)
+def seal_and_poweroff(pve, vmid, key, ip, user):
+    """SEAL_STEPS and the poweroff in ONE ssh session: the seal removes the build key (authorized_keys), so no new
+    login is possible after it (template run 224: `sync` as its own login got Permission denied)."""
+    ssh(key, ip, " && ".join(f"( {c} )" for c in SEAL_STEPS)
+        + " && ( nohup sh -c 'sleep 2; systemctl poweroff' >/dev/null 2>&1 & )", user, 600)
     end = time.time() + 300
     while time.time() < end:
         if pve.status(vmid) == "stopped":
@@ -606,9 +606,9 @@ def build_one(pve, rel, infra, std, lc, report):
             pve.do("POST", pve.qm(cand, "/status/start"))
             wait_ssh(key, net["ip"], user)
             ssh(key, net["ip"], "cloud-init status --wait >/dev/null 2>&1; true", user, 900)
-            for cmd in (spec.get("provision") or []) + SEAL_STEPS:
+            for cmd in spec.get("provision") or []:
                 ssh(key, net["ip"], cmd, user)
-            poweroff(pve, cand, key, net["ip"], user)
+            seal_and_poweroff(pve, cand, key, net["ip"], user)
             unboot_cfg(pve, cand)
             report(f"sealed: {len(spec.get('provision') or [])} provision step(s) + hygiene, clean poweroff")
         pve.do("POST", pve.qm(cand, "/template"))
