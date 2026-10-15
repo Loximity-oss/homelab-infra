@@ -1,7 +1,9 @@
 # VM templates: minimum requirements
 
-Templates live in VMID 9000-9199 (protected.yaml `templates`), are built by Faris on the PVE host and are
-clone-only for Terraform. They are never created or changed by the pipeline. `terraform/modules/vm-guests/main.tf`
+Templates live in VMID 9000-9199 (protected.yaml `templates`) and are clone-only for Terraform guest applies.
+Linux templates in 9000-9099 are built and refreshed by the `template` workflow from the reviewed specs in
+`terraform/templates/hm1/` (lifecycle, gates and build steps: `docs/templates.md`). Windows 9100-9199 stays manual.
+This note only holds the in-guest requirements. `terraform/modules/vm-guests/main.tf`
 clones a template and sets, per guest: q35, virtio-scsi-single, serial0 socket + `vga serial0`, QEMU agent enabled
 (waits up to 10 min), cloud-init drive with static IP, DNS, and `user_account root` + the pipeline SSH keys
 (`ansible/keys`). Ansible then connects as root over SSH and needs python3.
