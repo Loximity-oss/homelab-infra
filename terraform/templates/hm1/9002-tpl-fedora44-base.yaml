@@ -18,7 +18,7 @@ seal_user: fedora   # image default user (sudo); root login is enabled by the pr
 provision:
   - dnf -y install python3 qemu-guest-agent cloud-utils-growpart
   - for u in sshd qemu-guest-agent cloud-init-local cloud-init-main cloud-init-network cloud-init cloud-config cloud-final; do systemctl cat "$u.service" >/dev/null 2>&1 && systemctl enable "$u.service"; done; true
-  - printf 'disable_root: false\n' > /etc/cloud/cloud.cfg.d/90-hm1-root.cfg
+  - "printf 'disable_root: false\\n' > /etc/cloud/cloud.cfg.d/90-hm1-root.cfg"   # quoted: ': ' would make this a YAML mapping
   - printf 'PermitRootLogin prohibit-password\nPasswordAuthentication no\n' > /etc/ssh/sshd_config.d/10-hm1.conf
   - restorecon -R /etc/cloud/cloud.cfg.d /etc/ssh/sshd_config.d
 refresh: release   # release images are not respun; a new Fedora release is a new template (Class C)
