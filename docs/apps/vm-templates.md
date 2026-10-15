@@ -1,96 +1,66 @@
-# VM templates: minimum requirements
+# VM templates: in-guest requirements (cloud-init reference)
 
-Templates live in VMID 9000-9199 (protected.yaml `templates`) and are clone-only for Terraform guest applies.
-Linux templates in 9000-9099 are built and refreshed by the `template` workflow from the reviewed specs in
-`terraform/templates/hm1/` (lifecycle, gates and build steps: `docs/templates.md`). Windows 9100-9199 stays manual.
-This note only holds the in-guest requirements. `terraform/modules/vm-guests/main.tf`
-clones a template and sets, per guest: q35, virtio-scsi-single, serial0 socket + `vga serial0`, QEMU agent enabled
-(waits up to 10 min), cloud-init drive with static IP, DNS, and `user_account root` + the pipeline SSH keys
-(`ansible/keys`). Ansible then connects as root over SSH and needs python3.
+Linux templates (VMID 9000-9099) are built and refreshed by the `template` workflow from the reviewed specs in
+`terraform/templates/hm1/<vmid>-<name>.yaml`. The lifecycle, spec format, gates, build steps and rollback are in
+`docs/templates.md`. Windows 9100-9199 is outside that workflow. Templates are clone-only for Terraform guest applies
+(protected.yaml `templates`).
 
-| VMID | os tag | Template | Status |
+This note only explains why the specs and guests look the way they do, for roles and apps that depend on it.
+`terraform/modules/vm-guests/main.tf` clones a template and sets, per guest: q35, virtio-scsi-single, serial0 socket +
+`vga serial0`, QEMU agent enabled (waits up to 10 min), cloud-init drive with static IP, DNS, and `user_account root` +
+the pipeline SSH keys (`ansible/keys`). Ansible then connects as root over SSH and needs python3.
+
+| VMID | os tag | Template | Spec |
 |---|---|---|---|
-| 9000 | ubuntu2604 | Ubuntu 26.04 cloud image | exists, verified 2026-10-08 |
-| 9001 | arch | Arch Linux cloud image | to build |
-| 9002 | fedora44 | Fedora 44 Cloud Base | to build |
-| 9003 | nixos | NixOS, self-built | to build |
+| 9000 | ubuntu2604 | Ubuntu 26.04 cloud image | reference template (verified 2026-10-08) |
+| 9001 | arch | Arch Linux cloud image | `terraform/templates/hm1/9001-tpl-arch-base.yaml` |
+| 9002 | fedora44 | Fedora 44 Cloud Base | `terraform/templates/hm1/9002-tpl-fedora44-base.yaml` |
+| 9003 | nixos | NixOS (nixpkgs image builder) | `terraform/templates/hm1/9003-tpl-nixos2605-base.yaml` |
+
+Build state of each template is in the `template` workflow result on the PR that changed its spec.
 
 ## Common requirements (every template)
 
-- The disk must grow on clone (cloud-init `growpart`/`resizefs`, or the OS equivalent) so `disk_gb` takes effect.
-  The template disk size is the lower bound (`min_disk_gb`).
+Each OS cloud image provides these; the spec `provision` steps only fill gaps, and the build verifies them on a
+throwaway clone.
+
+- The disk grows on clone (cloud-init `growpart`/`resizefs`, or the OS equivalent) so `disk_gb` takes effect. The
+  template disk (8G) is the lower bound (`min_disk_gb`).
 - Packages: `cloud-init`, `qemu-guest-agent`, an SSH server, `python3` (Ansible). `sudo` is not needed (root login).
 - Enabled at boot: `sshd`, `qemu-guest-agent`, the cloud-init services (local, init/main, config, final), and
   cloud-init network configuration (static IP from the Proxmox cloud-init drive; DHCP must not be required).
-- Root SSH by key: `user_account root` only works if root login is allowed. Set `disable_root: false` in cloud-init
-  config and `PermitRootLogin prohibit-password` in sshd. Password login off.
+- Root SSH by key: `user_account root` only works if root login is allowed. Cloud images disable it, so the specs set
+  `disable_root: false` in cloud-init config and `PermitRootLogin prohibit-password` in sshd. Password login off.
+  This is why a spec may carry `seal_user` (the image's default user, used only for the build boot).
 - Serial console on ttyS0 (`console=ttyS0,115200 console=tty0`) because the VM has `vga serial0`.
-- Hygiene before `qm template`: no pre-baked SSH host keys, `cloud-init clean --logs`, empty `/etc/machine-id`,
-  no static IP/hostname, no secrets or user keys baked in.
-- Verify on a throwaway clone (as done for 9000): agent reports the IP, `ssh root@ip` works with the CI key, `python3 -V`.
+- Hygiene (done by the build): no pre-baked SSH host keys, `cloud-init clean`, empty machine-id, no static
+  IP/hostname, no secrets or user keys baked in.
 
-Build sketch on the PVE host (Faris, root):
+## Per-OS notes
 
-```
-qm create 900X --name tpl-<os> --machine q35 --memory 2048 --cores 2 --net0 virtio,bridge=<stg bridge> \
-  --scsihw virtio-scsi-single --agent enabled=1 --serial0 socket --vga serial0 --ostype l26
-qm importdisk 900X <image>.qcow2 <datastore>
-qm set 900X --scsi0 <datastore>:vm-900X-disk-0,discard=on,iothread=1,ssd=1 --boot order=scsi0 --ide2 <datastore>:cloudinit
-qm template 900X
-```
+### Arch Linux (9001, os `arch`)
 
-Then add the per-template `DevOpsTemplateUse` ACL for the apply token (checked by `scripts/template-guard.py`).
-Image locations below are starting points; confirm the current path and checksum on the vendor site first.
-
-## Arch Linux (9001, os `arch`)
-
-- Source: official `Arch-Linux-x86_64-cloudimg.qcow2` from `geo.mirror.pkgbuild.com/images/latest/` (verify checksum).
-- Should ship cloud-init, qemu-guest-agent, openssh and python (verify with `pacman -Q`). Enable `sshd`,
-  `qemu-guest-agent`, `cloud-init-local`, `cloud-init-main`, `cloud-init-network`, `cloud-config`, `cloud-final`,
-  `systemd-networkd`, `systemd-resolved`.
-- Default user `arch`; root login disabled by default: add `disable_root: false` in `/etc/cloud/cloud.cfg.d/`.
+- Ships cloud-init, qemu-guest-agent, openssh and python. Services of interest: `sshd`, `qemu-guest-agent`,
+  `cloud-init-local`, `cloud-init-main`, `cloud-init-network`, `cloud-config`, `cloud-final`, `systemd-networkd`,
+  `systemd-resolved`.
+- Default user `arch`; root login disabled by default (`disable_root: false` in `/etc/cloud/cloud.cfg.d/`).
 - Rolling release. Package manager: `pacman`.
 
-## Fedora 44 (9002, os `fedora44`)
+### Fedora 44 (9002, os `fedora44`)
 
-- Source: Fedora Cloud Base qcow2 under `download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/`
-  (verify against the CHECKSUM file).
-- Ships cloud-init, qemu-guest-agent, openssh-server, python3. Ensure `qemu-guest-agent`, `sshd`, `cloud-init-local`,
-  `cloud-init`, `cloud-config`, `cloud-final` are enabled; NetworkManager is the backend (cloud-init drives it).
-- Default user `fedora`; set `disable_root: false`. SELinux stays enforcing. Package manager: `dnf`.
+- Ships cloud-init, qemu-guest-agent, openssh-server, python3. NetworkManager is the backend (cloud-init drives it).
+- Default user `fedora`; `disable_root: false` is set. SELinux stays enforcing. Package manager: `dnf`.
 
-## NixOS (9003, os `nixos`)
+### NixOS (9003, os `nixos`)
 
-No stock cloud-init qcow2 exists. Build once (install from the minimal ISO with this config, or `nixos-generators
--f qcow`), then templatise. Minimal `configuration.nix` fragment:
+No stock cloud-init qcow2 exists, so the workflow builds one with nixpkgs' image builder from the config under
+`terraform/templates/hm1/nixos/` at a pinned `nixpkgs_rev`. The config enables cloud-init with network config,
+`services.qemuGuest`, openssh (`PermitRootLogin = prohibit-password`, no passwords), python3, `ttyS0` kernel
+parameters and root partition auto-resize.
 
-```nix
-{ config, pkgs, lib, ... }:
-{
-  boot.loader.grub = { enable = true; device = "/dev/sda"; };   # or systemd-boot for UEFI
-  boot.kernelParams = [ "console=ttyS0,115200" "console=tty0" ];
-  boot.growPartition = true;
-  fileSystems."/" = { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; autoResize = true; };
-
-  services.cloud-init = {
-    enable = true;
-    network.enable = true;            # static IP from the Proxmox cloud-init drive
-    settings.disable_root = false;
-  };
-  services.qemuGuest.enable = true;   # qemu-guest-agent
-  services.openssh = {
-    enable = true;
-    settings = { PermitRootLogin = "prohibit-password"; PasswordAuthentication = false; };
-  };
-  environment.systemPackages = with pkgs; [ python3 ];
-  networking.useDHCP = false;         # cloud-init configures the interface
-  system.stateVersion = "25.11";      # set to the release actually installed
-}
-```
-
-Notes: `/etc` is declarative, so durable changes (packages, users, services) go through `configuration.nix`, not
-imperative Ansible tasks. Option names (`services.cloud-init.settings`, `network.enable`) should be checked against
-the installed release. A dedicated `os_nixos` role (rendered `configuration.nix` + `nixos-rebuild switch`) is a follow-up.
+`/etc` is declarative, so durable changes (packages, users, services) on a NixOS guest go through its
+`configuration.nix`, not imperative Ansible tasks. A dedicated `os_nixos` role (rendered `configuration.nix` +
+`nixos-rebuild switch`) is a follow-up.
 
 ## Follow-ups before any guest of these OSes can deploy
 
@@ -107,4 +77,4 @@ was deliberately not changed: a silent `when: Debian` skip would hide a missing 
 4. Review `admin_secret.yml` for Debian-only assumptions.
 5. Patching: define pacman / dnf / nix equivalents. Fedora has `dnf updateinfo` security advisories; Arch and NixOS
    have no severity feed (treat as Sev3, reboot gate stays with Faris).
-6. Build the templates (host-level, Faris), add the ACL per template, then deploy one stg throwaway guest per OS.
+6. Once the templates are built by the workflow, deploy one stg throwaway guest per OS.
