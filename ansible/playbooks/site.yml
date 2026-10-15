@@ -11,7 +11,8 @@
   roles:
     - base_common
 
+# Every `role: dns` guest in any zone is an AdGuard resolver (secret path and OpenBao namespace follow its zone).
 - name: AdGuard DNS
-  hosts: hm1-iot-dns01,hm1-iot-dns02
+  hosts: role_dns
   roles:
     - app_adguard
