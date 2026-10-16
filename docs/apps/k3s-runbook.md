@@ -14,10 +14,14 @@ On a control node (`ssh_exec` on 310/311/312):
 
 ## Common problems
 - **VIP not answering**: `systemctl status keepalived` and `journalctl -u keepalived` on the control nodes; a node in VRRP FAULT means `/usr/local/bin/k3s-api-check` fails (API not serving). VRRP is IP protocol 112 between the control nodes. Nodes still reach each other by IP; only workers and kubectl use the VIP. Do not enable `anonymous-auth` to "fix" a 401: 401 is the healthy answer.
+- **A control node crash-loops with `server/cred/passwd newer than datastore and could cause a cluster outage`**: k3s was restarted while it was still joining etcd. Fix on that node: `systemctl stop k3s`, `rm /var/lib/rancher/k3s/server/cred/passwd`, `systemctl start k3s` (recreated from the datastore). The role does this itself for a joining control node that is not running; it never restarts k3s straight after its first start. Never delete the file on a healthy node and never on k3sc01 (the datastore source).
 - **A control node does not join**: `journalctl -u k3s` on it; check it reaches `192.168.70.30:6443` and 2379-2380 between servers, clocks in sync, and `/etc/rancher/k3s/config.yaml` has `server:` and `token:` (the server token). Re-run the apply (idempotent).
 - **Worker stays NotReady / does not join**: reach `192.168.70.200:6443`, check `br_netfilter`/`overlay` (`lsmod`), `sysctl net.ipv4.ip_forward` = 1, swap off (`swapon --show` empty), `journalctl -u k3s-agent`. A worker's `token:` must be the agent token (`/etc/rancher/k3s/agent-token` on k3sc01); the server token does not belong on workers.
 - **Pods stuck Pending on all workers**: taint is intended on servers only; check `kubectl describe node`.
 - **Lost quorum (2 of 3 control nodes down)**: API unavailable. Bring the nodes back first. Restoring from a snapshot is a last resort: `k3s server --cluster-reset --cluster-reset-restore-path=<snapshot>` on one node, then wipe `/var/lib/rancher/k3s/server/db` on the others and rejoin (Faris decides).
+
+## Restart rule (role)
+The role restarts k3s only if it was already running before the run started and its binary, config or unit changed. A first start is never followed by a restart. Combined with `serial: 1` this gives a rolling restart, one node at a time.
 
 ## Replacing a node
 - **Worker**: `kubectl drain <w> --ignore-daemonsets --delete-emptydir-data`, `kubectl delete node <w>`, then rebuild the VM; the apply joins it with the agent token from `k3sc01`.
