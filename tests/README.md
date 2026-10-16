@@ -13,4 +13,4 @@ Run by hand (apply runner, plan token for L1):
 Results: ✅ pass · ❌ fail · ⚠️ skip (never shown as pass). Protected guests must be *invisible* to the pipeline token.
 
 Everything under `tests/` is **Class C** (Faris): the contract can't be weakened by an agent PR.
-Scope today: Ubuntu LXC + VM, Arch VM (`tests/os/arch.goss.yaml.j2`; btrfs root: inode check n/a). Apps get their own CD later; Windows later (Pester, same result format).
+Scope today: Ubuntu LXC + VM, Arch VM (`tests/os/arch.goss.yaml.j2`; btrfs root: inode check n/a), Fedora 44 VM (`tests/os/fedora44.goss.yaml.j2`; btrfs root, SELinux enforcing; named per release because `verify_os_family` only collapses ubuntu/debian/win). Apps get their own CD later; Windows later (Pester, same result format).

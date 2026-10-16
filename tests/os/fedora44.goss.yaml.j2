@@ -1,0 +1,78 @@
+# L3 OS baseline for {{ inventory_hostname }} ({{ verify_type }}, {{ verify_os }}). Rendered by ansible/roles/verify.
+# Checks what base_common configures (design-v7 decision 32) plus the contract of template 9002
+# (terraform/templates/hm1/9002-tpl-fedora44-base.yaml). Values come from group_vars; never secrets.
+# Fedora 44 Cloud Base: VM only (no LXC template), btrfs root on a subvolume (no fixed inode table), SELinux enforcing,
+# NetworkManager driven by cloud-init. base_common has no dnf task yet, so there is no base_packages list to loop over:
+# the packages below are the ones the template installs and the pipeline relies on. When base_common gains a RedHat
+# package task, check its list here too.
+# The file is named for the release because verify_os_family only collapses ubuntu*/debian*/win*; a new Fedora release
+# is a new template and gets its own baseline (template spec: refresh: release).
+command:
+  l3-timezone:
+    exec: "timedatectl show -p Timezone --value"
+    exit-status: 0
+    stdout: ["{{ timezone }}"]
+  l3-hostname:
+    exec: "hostname"
+    exit-status: 0
+    stdout: ["/^{{ inventory_hostname }}$/"]
+  l3-no-failed-units:
+    exec: "f=$(systemctl list-units --state=failed --no-legend --plain | awk '{print $1}' | paste -sd' '); echo \"failed: ${f:-none}\"; test -z \"$f\""
+    exit-status: 0   # on failure verify.py names the units in the evidence
+  l3-disk-free:
+    exec: "p=$(df --output=pcent / | tail -1 | tr -dc 0-9); echo \"used ${p}%\"; test \"$p\" -le {{ verify_max_used_pct }}"
+    exit-status: 0
+  # btrfs allocates inodes dynamically, so df reports no inode percentage; only check where the filesystem has a table.
+  l3-inodes-free:
+    exec: "t=$(findmnt -no FSTYPE /); p=$(df --output=ipcent / | tail -1 | tr -dc 0-9); if [ -z \"$p\" ]; then echo \"inodes: n/a ($t allocates inodes dynamically)\"; exit 0; fi; echo \"inodes used ${p}% ($t)\"; test \"$p\" -le {{ verify_max_used_pct }}"
+    exit-status: 0
+  # chronyd or timesyncd, whichever the image ships: the kernel's sync flag is what timedatectl reports.
+  l3-time-synced:
+    exec: "timedatectl show -p NTPSynchronized --value"
+    exit-status: 0
+    stdout: ["yes"]
+  # The template provisioning runs restorecon on the files it writes. A guest that fell back to permissive/disabled
+  # would pass everything else and still be weaker than the other families.
+  l3-selinux-enforcing:
+    exec: "getenforce"
+    exit-status: 0
+    stdout: ["/^Enforcing$/"]
+  # Ansible runs with python3 on the guest; the template installs it.
+  l3-python3:
+    exec: "command -v python3 >/dev/null && python3 --version"
+    exit-status: 0
+    stdout: ["/^Python 3\\./"]
+  # Exit 2 ("degraded done") only means recoverable warnings, e.g. Proxmox's cloud-init still writes the deprecated
+  # string 'user' key. Pass = done with no errors; deprecations are tolerated.
+  l3-cloud-init-done:
+    exec: "cloud-init status --long; true"
+    exit-status: 0
+    stdout: ["/^status: done$/", "/^errors: \\[\\]$/"]
+  # The first boot grows the root partition and then the filesystem (growpart + btrfs resize). findmnt prints
+  # /dev/vdaN[/root] for a btrfs subvolume, so strip the subvolume suffix before asking lsblk for the parent disk.
+  l3-root-fs-grown:
+    exec: "src=$(findmnt -no SOURCE / | sed 's/\\[.*//'); dev=/dev/$(lsblk -no PKNAME \"$src\"); d=$(lsblk -bndo SIZE \"$dev\"); f=$(df -B1 --output=size / | tail -1 | tr -dc 0-9); echo \"disk $((d/1073741824))G fs $((f/1073741824))G\"; test $((d - f)) -le 2147483648"
+    exit-status: 0
+package:
+  # Template 9002 provision: dnf install python3 qemu-guest-agent cloud-utils-growpart. cloud-init and openssh-server
+  # come with the image; the guest cannot be managed or resized without them.
+  python3:
+    installed: true
+  qemu-guest-agent:
+    installed: true
+  cloud-utils-growpart:
+    installed: true
+  cloud-init:
+    installed: true
+  openssh-server:
+    installed: true
+file:
+  /etc/hm1/admin-secret-stored:
+    exists: true
+    filetype: file
+service:
+  qemu-guest-agent:
+    running: true
+  sshd:
+    enabled: true
+    running: true
