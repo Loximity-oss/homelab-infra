@@ -40,3 +40,16 @@
     svc_k3s_node_type: agent
   roles:
     - svc_k3s
+
+# Last: escrow the join tokens in OpenBao (create-only, once, first control node only). Separate play on purpose:
+# the cluster is complete before it runs, so an OpenBao failure (policy, token, namespace) cannot leave it half-configured
+# or restart anything. Needs the ci-apply grant `+/secret/data/apps/k3s/*` create.
+- name: k3s token escrow
+  hosts: role_k3sc
+  gather_facts: false
+  tasks:
+    - name: Escrow tokens in OpenBao (first control node)
+      ansible.builtin.include_role:
+        name: svc_k3s
+        tasks_from: escrow
+      when: inventory_hostname == (groups['role_k3sc'] | sort | first)

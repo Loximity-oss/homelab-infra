@@ -11,6 +11,7 @@ On a control node (`ssh_exec` on 310/311/312):
 - `curl -ks -o /dev/null -w '%{http_code}\n' https://192.168.70.200:6443/livez` from any shr guest: expect `401` (anonymous auth is off; 401 means the API answers)
 - `/usr/local/bin/k3s-api-check; echo $?` (0 = healthy, the keepalived check)
 - `journalctl -u k3s -n 80 --no-pager` (workers: `-u k3s-agent`)
+- Escrow done: `test -f /etc/hm1/k3s-tokens-escrowed && cat /etc/hm1/k3s-tokens-escrowed` on k3sc01
 
 ## Common problems
 - **VIP not answering**: `systemctl status keepalived` and `journalctl -u keepalived` on the control nodes; a node in VRRP FAULT means `/usr/local/bin/k3s-api-check` fails (API not serving). VRRP is IP protocol 112 between the control nodes. Nodes still reach each other by IP; only workers and kubectl use the VIP. Do not enable `anonymous-auth` to "fix" a 401: 401 is the healthy answer.
@@ -19,6 +20,7 @@ On a control node (`ssh_exec` on 310/311/312):
 - **Worker stays NotReady / does not join**: reach `192.168.70.200:6443`, check `br_netfilter`/`overlay` (`lsmod`), `sysctl net.ipv4.ip_forward` = 1, swap off (`swapon --show` empty), `journalctl -u k3s-agent`. A worker's `token:` must be the agent token (`/etc/rancher/k3s/agent-token` on k3sc01); the server token does not belong on workers.
 - **Pods stuck Pending on all workers**: taint is intended on servers only; check `kubectl describe node`.
 - **Lost quorum (2 of 3 control nodes down)**: API unavailable. Bring the nodes back first. Restoring from a snapshot is a last resort: `k3s server --cluster-reset --cluster-reset-restore-path=<snapshot>` on one node, then wipe `/var/lib/rancher/k3s/server/db` on the others and rejoin (Faris decides).
+- **The last play 'k3s token escrow' failed at 'Write once to OpenBao'**: the cluster itself is complete (the play runs after it). 403 = the ci-apply policy lacks `+/secret/data/apps/k3s/*` create, or the shr namespace is missing (platform: Faris, `apply.sh`). No marker was written, so the next apply retries. **400 (check-and-set)** = the secret already exists in OpenBao but the marker is missing (the run died between write and marker): Faris deletes `shr/secret/apps/k3s/hm1-shr-k3sc01` in OpenBao, then re-run the apply.
 
 ## Restart rule (role)
 The role restarts k3s only if it was already running before the run started and its binary, config or unit changed. A first start is never followed by a restart. Combined with `serial: 1` this gives a rolling restart, one node at a time.
@@ -39,7 +41,11 @@ Two different secrets, both root-only on the guests, never in Git or logs:
 - **Server token** `/var/lib/rancher/k3s/server/token` on the control nodes (also in `config.yaml` of `k3sc02/03`). Lets a node join as a control node.
 - **Agent token** `/etc/rancher/k3s/agent-token` on `k3sc01` (generated once), set as `agent-token` in `config.yaml` on all control nodes and as `token:` on the workers. Lets a node join as a worker only.
 
-Rotation: for the agent token, delete `/etc/rancher/k3s/agent-token` on k3sc01 and re-run the apply (control nodes restart one at a time, workers are re-configured and restarted). For the server token use `k3s token rotate` on a server, then re-run the apply.
+**Escrow in OpenBao.** Both tokens are copied once to `shr/secret/apps/k3s/hm1-shr-k3sc01` (keys `server_token`, `agent_token`) by the last play of the apply (`tasks/escrow.yml`), guarded by `/etc/hm1/k3s-tokens-escrowed` (root, 0600) on k3sc01. The write is create-only: the pipeline can never read, overwrite or update it, and agents see key names only. Faris reads it in OpenBao (namespace `shr`, `secret/apps/k3s/hm1-shr-k3sc01`). Use it to rebuild or re-seed a control node after a total loss of the cluster nodes (the etcd data itself is not in it).
+
+**Rotation.** The escrow is a one-time copy and is not updated by the pipeline. After rotating a token: Faris deletes the secret (all versions) in OpenBao, deletes `/etc/hm1/k3s-tokens-escrowed` on k3sc01, then re-run the apply, which writes the new values.
+- Agent token: delete `/etc/rancher/k3s/agent-token` on k3sc01 and re-run the apply (control nodes restart one at a time, workers are re-configured and restarted), then redo the escrow as above.
+- Server token: `k3s token rotate` on a server, then re-run the apply, then redo the escrow as above.
 
 ## Data / backup
-etcd and snapshots live in `/var/lib/rancher/k3s/server/db`; **not backed up** (open item A-1). Config, binary and units are rebuilt by the apply; the two tokens are not (agent token is regenerated if lost).
+etcd and snapshots live in `/var/lib/rancher/k3s/server/db`; **not backed up** (open item A-1). Config, binary and units are rebuilt by the apply; the two tokens are escrowed in OpenBao (agent token is regenerated if lost and no escrow exists).
