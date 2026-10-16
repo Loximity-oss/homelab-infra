@@ -1,0 +1,12 @@
+hostname: hm1-shr-k3sw02
+vmid: 314
+type: vm
+role: k3sw
+os: ubuntu2604
+ip: 192.168.70.34
+cores: 4
+memory_mb: 6144
+disk_gb: 40
+owner: infra
+patch: ring1
+description: k3s worker node 2

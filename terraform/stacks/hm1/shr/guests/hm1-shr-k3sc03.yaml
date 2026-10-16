@@ -1,0 +1,12 @@
+hostname: hm1-shr-k3sc03
+vmid: 312
+type: vm
+role: k3sc
+os: ubuntu2604
+ip: 192.168.70.32
+cores: 2
+memory_mb: 4096
+disk_gb: 20
+owner: infra
+patch: ring1
+description: k3s control plane node 3
