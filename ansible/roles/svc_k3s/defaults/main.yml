@@ -21,3 +21,7 @@ svc_k3s_server_taints:
   - CriticalAddonsOnly=true:NoExecute
 svc_k3s_etcd_snapshot_cron: "0 */12 * * *"
 svc_k3s_etcd_snapshot_retention: 10
+
+# Token escrow in OpenBao (tasks/escrow.yml): done-marker on the first control node, OpenBao address as in app_adguard.
+svc_k3s_escrow_marker: /etc/hm1/k3s-tokens-escrowed
+svc_k3s_escrow_bao_url: https://192.168.70.12:8200
