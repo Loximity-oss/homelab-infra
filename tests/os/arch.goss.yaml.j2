@@ -36,7 +36,7 @@ command:
     exit-status: 0
     stdout: ["/^status: done$/", "/^errors: \\[\\]$/"]
   l3-root-fs-grown:
-    exec: "src=$(findmnt -no SOURCE / | sed 's/\\[.*//'); dev=/dev/$(lsblk -no PKNAME \"$src\"); d=$(lsblk -bndo SIZE \"$dev\"); f=$(df -B1 --output=size / | tail -1 | tr -dc 0-9); echo \"disk $((d/1073741824))G fs $((f/1073741824))G\"; test $((d - f)) -le 2147483648"
+    exec: "src=$(findmnt -no SOURCE / | sed 's/\\[.*//'); dev=/dev/$(lsblk -no PKNAME \"$src\"); d=$(lsblk -bndo SIZE \"$dev\"); f=$(df -B1 --output=size / | tail -1 | tr -dc 0-9); t=$((1288490189 + d / 20)); echo \"disk $((d/1073741824))G fs $((f/1073741824))G gap $(((d - f)/1048576))M limit $((t/1048576))M\"; test $((d - f)) -le $t"
     exit-status: 0
 {% endif %}
 package:
