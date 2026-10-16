@@ -11,4 +11,3 @@ datastore: lvmt-sata01
 owner: infra
 patch: ring1
 description: Empty Fedora 44 VM (no configuration), requested by Faris
-zone: dmz
