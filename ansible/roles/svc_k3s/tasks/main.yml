@@ -1,0 +1,222 @@
+# k3s node (server or agent), native binary, no get.k3s.io script.
+# Order: kernel prerequisites -> binary -> (server: keepalived VIP) -> token -> config -> unit -> start -> healthcheck.
+- name: Packages
+  ansible.builtin.apt:
+    name: "{{ ['iptables', 'conntrack'] + (['keepalived'] if svc_k3s_node_type == 'server' else []) }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 600
+
+# ---- Kernel prerequisites
+- name: Kernel modules loaded at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k3s.conf
+    content: |
+      overlay
+      br_netfilter
+    mode: "0644"
+
+- name: Kernel modules loaded now
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: [overlay, br_netfilter]
+
+- name: Sysctls (forwarding, bridge netfilter)
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/90-k3s.conf
+    content: |
+      net.ipv4.ip_forward = 1
+      net.ipv6.conf.all.forwarding = 1
+      net.bridge.bridge-nf-call-iptables = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+    mode: "0644"
+  notify: reload sysctl
+
+- name: Apply sysctls before k3s starts
+  ansible.builtin.meta: flush_handlers
+
+# kubelet refuses to start with swap on
+- name: Active swap
+  ansible.builtin.command: swapon --show --noheadings
+  register: _k3s_swap
+  changed_when: false
+
+- name: Swap off now
+  ansible.builtin.command: swapoff -a
+  when: _k3s_swap.stdout | trim | length > 0
+
+- name: Swap off at boot (comment fstab swap entries)
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#\n]+\s+swap\s+.*)$'
+    replace: '# \1'
+
+# ---- Binary (sha256 pinned)
+- name: Installed version
+  ansible.builtin.command: /usr/local/bin/k3s --version
+  register: _k3s_ver
+  failed_when: false
+  changed_when: false
+
+- name: Download and install the binary
+  when: svc_k3s_version not in (_k3s_ver.stdout | default(''))
+  block:
+    - name: Download release (sha256 pinned)
+      ansible.builtin.get_url:
+        url: "{{ svc_k3s_url }}"
+        dest: "/var/cache/k3s-{{ svc_k3s_version }}"
+        checksum: "sha256:{{ svc_k3s_sha256 }}"
+        mode: "0755"
+
+    - name: Install binary
+      ansible.builtin.copy:
+        src: "/var/cache/k3s-{{ svc_k3s_version }}"
+        dest: /usr/local/bin/k3s
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      notify: restart k3s
+
+# ---- Control nodes: API VIP via keepalived (VRRP unicast between the three control nodes)
+- name: API VIP (keepalived)
+  when: svc_k3s_node_type == 'server'
+  block:
+    - name: Script user for the health script
+      ansible.builtin.user:
+        name: keepalived_script
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+
+    - name: keepalived config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../apps/k3s/keepalived.conf.j2"
+        dest: /etc/keepalived/keepalived.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart keepalived
+
+# ---- Join token. The first control node generates it; the others and the workers read it from that node during
+# the same run (runner memory only, never logged, never in Git, never in OpenBao: see docs/apps/k3s.md).
+# Control nodes join with the server token, workers with the agent token (cannot join as a control node).
+- name: Cluster token from the first control node
+  ansible.builtin.slurp:
+    src: "/var/lib/rancher/k3s/server/{{ 'token' if svc_k3s_node_type == 'server' else 'agent-token' }}"
+  delegate_to: "{{ svc_k3s_init_host }}"
+  register: _k3s_token_raw
+  no_log: true
+  when: inventory_hostname != svc_k3s_init_host
+
+- name: Token fact
+  ansible.builtin.set_fact:
+    _k3s_token: "{{ _k3s_token_raw.content | b64decode | trim }}"
+  no_log: true
+  when: inventory_hostname != svc_k3s_init_host
+
+- name: Config directory
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    mode: "0755"
+
+- name: k3s config
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../../apps/k3s/config.yaml.j2"
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: restart k3s
+
+- name: Systemd unit
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../../apps/k3s/k3s.service.j2"
+    dest: "/etc/systemd/system/{{ svc_k3s_service }}.service"
+    mode: "0644"
+  register: _k3s_unit
+  notify: restart k3s
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _k3s_unit.changed
+
+# Workers join through the VIP: wait for it (keepalived is started by the control plane play before).
+- name: Wait for the API VIP (workers)
+  ansible.builtin.wait_for:
+    host: "{{ svc_k3s_api_vip }}"
+    port: "{{ svc_k3s_api_port }}"
+    timeout: 300
+  when: svc_k3s_node_type == 'agent'
+
+- name: k3s enabled and running
+  ansible.builtin.systemd:
+    name: "{{ svc_k3s_service }}"
+    enabled: true
+    state: started
+
+# keepalived starts only after k3s runs, so the VIP is never held by a node without an API
+- name: keepalived enabled and running
+  ansible.builtin.systemd:
+    name: keepalived
+    enabled: true
+    state: started
+  when: svc_k3s_node_type == 'server'
+
+- name: Apply restarts now
+  ansible.builtin.meta: flush_handlers
+
+# ---- Healthcheck: API ready (servers), node Ready (all, asked on the first control node)
+- name: Healthcheck API ready (servers)
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - --kubeconfig
+      - /etc/rancher/k3s/k3s.yaml
+      - get
+      - --raw
+      - /readyz
+  register: _k3s_ready
+  retries: 60
+  delay: 5
+  until: _k3s_ready.rc == 0
+  changed_when: false
+  when: svc_k3s_node_type == 'server'
+
+# argv form: the jsonpath keeps its double quotes (a command string would be shell-split and strip them)
+- name: Healthcheck node Ready
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - --kubeconfig
+      - /etc/rancher/k3s/k3s.yaml
+      - get
+      - node
+      - "{{ inventory_hostname }}"
+      - -o
+      - 'jsonpath={.status.conditions[?(@.type=="Ready")].status}'
+  register: _k3s_node
+  delegate_to: "{{ svc_k3s_init_host }}"
+  retries: 60
+  delay: 5
+  until: _k3s_node.rc == 0 and _k3s_node.stdout == 'True'
+  changed_when: false
+
+- name: Healthcheck API VIP answers (first control node run)
+  ansible.builtin.uri:
+    url: "https://{{ svc_k3s_api_vip }}:{{ svc_k3s_api_port }}/livez"
+    validate_certs: false
+    status_code: [200]
+  register: _k3s_vip
+  retries: 20
+  delay: 3
+  until: _k3s_vip.status == 200
+  delegate_to: localhost
+  when: svc_k3s_node_type == 'server' and inventory_hostname == svc_k3s_init_host

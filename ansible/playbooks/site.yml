@@ -16,3 +16,27 @@
   hosts: role_dns
   roles:
     - app_adguard
+
+# k3s HA cluster (docs/apps/k3s.md). Control nodes first, one at a time (etcd quorum), the first sorted host runs
+# --cluster-init; any failure stops the rollout. Workers follow, also one at a time.
+- name: k3s control plane
+  hosts: role_k3sc
+  serial: 1
+  order: sorted
+  any_errors_fatal: true
+  gather_facts: false
+  vars:
+    svc_k3s_node_type: server
+  roles:
+    - svc_k3s
+
+- name: k3s workers
+  hosts: role_k3sw
+  serial: 1
+  order: sorted
+  any_errors_fatal: true
+  gather_facts: false
+  vars:
+    svc_k3s_node_type: agent
+  roles:
+    - svc_k3s
