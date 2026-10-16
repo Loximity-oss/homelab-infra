@@ -6,7 +6,7 @@ global_defs {
 }
 
 vrrp_script chk_apiserver {
-  script "/usr/bin/curl -ksf --max-time 2 -o /dev/null https://127.0.0.1:{{ svc_k3s_api_port }}/livez"
+  script "/usr/local/bin/k3s-api-check"
   interval 3
   fall 3
   rise 2

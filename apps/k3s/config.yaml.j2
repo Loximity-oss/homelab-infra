@@ -4,6 +4,7 @@ node-ip: {{ ansible_host }}
 {% if svc_k3s_node_type == 'server' %}
 write-kubeconfig-mode: "0600"
 secrets-encryption: true
+agent-token: "{{ _k3s_agent_token }}"
 tls-san:
   - {{ svc_k3s_api_vip }}
   - {{ ansible_host }}
@@ -22,5 +23,5 @@ token: "{{ _k3s_token }}"
 {% endif %}
 {% else %}
 server: https://{{ svc_k3s_api_vip }}:{{ svc_k3s_api_port }}
-token: "{{ _k3s_token }}"
+token: "{{ _k3s_agent_token }}"
 {% endif %}
