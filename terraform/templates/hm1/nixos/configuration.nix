@@ -22,7 +22,10 @@
     enable = true;
     settings = { PermitRootLogin = "prohibit-password"; PasswordAuthentication = false; };
   };
-  environment.systemPackages = with pkgs; [ python3 ];
+  # The cloud-init module only puts the binary on the units' PATH, not on the system PATH. The builder's seal step
+  # (`cloud-init clean`) and the verify step (`cloud-init status`) run it over ssh: without this they fail with
+  # "cloud-init: command not found" (template run 204, after #71 fixed the boot).
+  environment.systemPackages = with pkgs; [ python3 config.services.cloud-init.package ];
   networking.useDHCP = false;         # cloud-init configures the interface
   networking.hostName = "";           # set per clone by cloud-init
   system.stateVersion = "26.05";
