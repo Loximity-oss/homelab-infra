@@ -1,0 +1,23 @@
+# Pinned k3s release (upgrade = bump version + sha256 by PR; sha256 from the release's sha256sum-amd64.txt, line `k3s`).
+svc_k3s_version: "v1.36.5+k3s1"
+svc_k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
+svc_k3s_url: "https://github.com/k3s-io/k3s/releases/download/{{ svc_k3s_version | replace('+', '%2B') }}/k3s"
+
+# server (role k3sc) or agent (role k3sw); set per play in playbooks/site.yml
+svc_k3s_node_type: agent
+svc_k3s_service: "{{ 'k3s' if svc_k3s_node_type == 'server' else 'k3s-agent' }}"
+
+# The first control node (sorted) bootstraps embedded etcd (--cluster-init); the others join it.
+svc_k3s_init_host: "{{ groups['role_k3sc'] | sort | first }}"
+svc_k3s_api_port: 6443
+
+# API VIP (shr vip band .200-.239), held by keepalived (VRRP, unicast) on the control nodes. Workers join through it.
+svc_k3s_api_vip: 192.168.70.200
+svc_k3s_vip_prefix: 24
+svc_k3s_vrrp_router_id: 70
+
+# Server taint: only addons that tolerate CriticalAddonsOnly (coredns, traefik, metrics-server ...) run on control nodes.
+svc_k3s_server_taints:
+  - CriticalAddonsOnly=true:NoExecute
+svc_k3s_etcd_snapshot_cron: "0 */12 * * *"
+svc_k3s_etcd_snapshot_retention: 10

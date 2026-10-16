@@ -1,0 +1,24 @@
+# Managed by Ansible (role svc_k3s)
+[Unit]
+Description=Lightweight Kubernetes ({{ svc_k3s_node_type }})
+Documentation=https://k3s.io
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type={{ 'notify' if svc_k3s_node_type == 'server' else 'exec' }}
+KillMode=process
+Delegate=yes
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+TimeoutStartSec=0
+Restart=always
+RestartSec=5s
+ExecStartPre=-/sbin/modprobe br_netfilter
+ExecStartPre=-/sbin/modprobe overlay
+ExecStart=/usr/local/bin/k3s {{ svc_k3s_node_type }}
+
+[Install]
+WantedBy=multi-user.target
