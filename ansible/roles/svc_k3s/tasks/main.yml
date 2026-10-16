@@ -1,5 +1,6 @@
 # k3s node (server or agent), native binary, no get.k3s.io script.
-# Order: kernel prerequisites -> binary -> (server: keepalived VIP) -> tokens -> config -> unit -> start -> healthcheck.
+# Order: kernel prerequisites -> was-running check -> binary -> (server: keepalived VIP) -> tokens -> config -> unit ->
+# (joining server: clean start state) -> start -> restart only if it was already running -> healthcheck.
 - name: Packages
   ansible.builtin.apt:
     name: "{{ ['iptables', 'conntrack', 'curl'] + (['keepalived'] if svc_k3s_node_type == 'server' else []) }}"
@@ -53,6 +54,19 @@
     regexp: '^([^#\n]+\s+swap\s+.*)$'
     replace: '# \1'
 
+# Was k3s running before this run touched anything? Decides below whether a change needs a restart. A first start
+# (or a start of a crash-looping node) must never be followed by a restart: restarting a server that is still joining
+# etcd leaves server/cred/passwd newer than the datastore and k3s then refuses to start.
+- name: Is k3s active before this run
+  ansible.builtin.command: "systemctl is-active {{ svc_k3s_service }}"
+  register: _k3s_active
+  failed_when: false
+  changed_when: false
+
+- name: Remember the running state
+  ansible.builtin.set_fact:
+    _k3s_was_active: "{{ _k3s_active.rc == 0 }}"
+
 # ---- Binary (sha256 pinned)
 - name: Installed version
   ansible.builtin.command: /usr/local/bin/k3s --version
@@ -78,7 +92,7 @@
         owner: root
         group: root
         mode: "0755"
-      notify: restart k3s
+      register: _k3s_bin
 
 # ---- Control nodes: API VIP via keepalived (VRRP unicast between the three control nodes)
 - name: API VIP (keepalived)
@@ -160,7 +174,7 @@
     group: root
     mode: "0600"
   no_log: true
-  notify: restart k3s
+  register: _k3s_cfg
 
 - name: Systemd unit
   ansible.builtin.template:
@@ -168,12 +182,28 @@
     dest: "/etc/systemd/system/{{ svc_k3s_service }}.service"
     mode: "0644"
   register: _k3s_unit
-  notify: restart k3s
 
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
   when: _k3s_unit.changed
+
+# A joining control node that is not running (first start, or crash-looping from an earlier failed start): its
+# server/cred/passwd may be newer than the datastore, which k3s treats as fatal. Stop the service and remove the
+# file; k3s recreates it from the datastore. The first control node is never touched (it is the datastore source),
+# and running nodes are skipped, so this is a no-op on healthy nodes.
+- name: Joining control node not running yet, clean start state
+  when: svc_k3s_node_type == 'server' and inventory_hostname != svc_k3s_init_host and not _k3s_was_active
+  block:
+    - name: Stop k3s (no-op if it is not running)
+      ansible.builtin.systemd:
+        name: "{{ svc_k3s_service }}"
+        state: stopped
+
+    - name: Remove a stale server credential file (recreated from the datastore)
+      ansible.builtin.file:
+        path: /var/lib/rancher/k3s/server/cred/passwd
+        state: absent
 
 # Workers join through the VIP: wait for it (keepalived is started by the control plane play before).
 - name: Wait for the API VIP (workers)
@@ -183,11 +213,21 @@
     timeout: 300
   when: svc_k3s_node_type == 'agent'
 
+# Start (a first start returns when the node is up, Type=notify for servers). No restart follows it in this run.
 - name: k3s enabled and running
   ansible.builtin.systemd:
     name: "{{ svc_k3s_service }}"
     enabled: true
     state: started
+
+# Only a node that was already running before this run is restarted, and only if something it reads has changed.
+- name: Restart k3s to apply a changed binary, config or unit (only if it was already running)
+  ansible.builtin.systemd:
+    name: "{{ svc_k3s_service }}"
+    state: restarted
+  when: >-
+    _k3s_was_active and
+    ((_k3s_bin.changed | default(false)) or (_k3s_cfg.changed | default(false)) or (_k3s_unit.changed | default(false)))
 
 # keepalived starts only after k3s runs, so the VIP is never held by a node without an API
 - name: keepalived enabled and running
@@ -197,7 +237,7 @@
     state: started
   when: svc_k3s_node_type == 'server'
 
-- name: Apply restarts now
+- name: Apply keepalived restarts now
   ansible.builtin.meta: flush_handlers
 
 # ---- Healthcheck: API ready (servers), node Ready (all, asked on the first control node)
