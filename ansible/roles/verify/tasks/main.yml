@@ -44,3 +44,28 @@
     dest: "{{ verify_out }}/{{ inventory_hostname }}.l3.json"
     mode: "0640"
   delegate_to: localhost
+
+# ---- L4 app checks (tests/apps/<role>.goss.yaml.j2). Runs after L3 is written, as a separate Goss run with its own
+# result file: an app problem (or a render error here) can neither hide nor break the L3 result above. A render error
+# leaves no <host>.l4.json, which scripts/verify.py reports as a failure.
+- name: App checks (L4)
+  when: verify_app_tests is file
+  block:
+    - name: App tests
+      ansible.builtin.template:
+        src: "{{ verify_app_tests }}"
+        dest: /etc/hm1/goss/app.yaml
+        mode: "0640"
+
+    - name: Run (L4)
+      ansible.builtin.command: /usr/local/bin/goss -g /etc/hm1/goss/app.yaml validate --format json --no-color
+      register: verify_l4
+      changed_when: false
+      failed_when: false
+
+    - name: L4 results to the runner
+      ansible.builtin.copy:
+        content: "{{ verify_l4.stdout if verify_l4.stdout | length > 0 else ({'error': verify_l4.stderr | default('no output')} | to_json) }}"
+        dest: "{{ verify_out }}/{{ inventory_hostname }}.l4.json"
+        mode: "0640"
+      delegate_to: localhost
