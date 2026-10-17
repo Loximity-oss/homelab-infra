@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Guest deployment tests (design-v7 decision 32): L1 platform, L2 reachability, L3 OS baseline (Goss via Ansible),
-and the "gone" check for destroyed guests. Read-only except L3 copying Goss + the rendered baseline to the guest.
+L4 app checks (Goss, only for roles with tests/apps/<role>.goss.yaml.j2) and the "gone" check for destroyed guests.
+Read-only except L3/L4 copying Goss + the rendered test files to the guest.
 
 Usage: verify.py --standards DIR [--hosts h1,h2 | --all] [--gone host:vmid:ip,...] --out DIR [--no-l3]
-Env:   PROXMOX_VE_API_TOKEN (plan token: read-only), INFRA_ROOT (repo checkout). L2/L3 need the apply runner's SSH key.
-Writes DIR/verify.json and DIR/verify.md; exit 1 if any check failed (skips are reported as ⚠️, never as ✅)."""
+Env:   PROXMOX_VE_API_TOKEN (plan token: read-only), INFRA_ROOT (repo checkout). L2-L4 need the apply runner's SSH key.
+Writes DIR/verify.json and DIR/verify.md; exit 1 if any check failed (skips are reported as ⚠️, never as ✅).
+--no-l3 skips the Goss layers (L3 and L4)."""
 import argparse, json, os, re, socket, ssl, subprocess, sys, urllib.request
 import yaml
 
@@ -140,7 +142,39 @@ def l2(rep, s):
     rep.ok(h, "L2", "hostname", r.stdout.strip() == h, r.stdout.strip() or "-")
 
 
-def l3(rep, hosts, out):
+def app_tests(role):
+    """L4: tests/apps/<role>.goss.yaml.j2 = app checks for every guest of that role (rendered by ansible/roles/verify)."""
+    return os.path.exists(os.path.join(ROOT, "tests", "apps", f"{role}.goss.yaml.j2"))
+
+
+def goss_rows(rep, h, layer, f):
+    """One report row per Goss result in f. Missing, unreadable or error result = one failed 'goss run' row."""
+    if not os.path.exists(f):
+        rep.add(h, layer, "goss run", "fail", "no result (see verify-ansible.log)")
+        return
+    try:
+        d = json.load(open(f))
+    except ValueError:
+        rep.add(h, layer, "goss run", "fail", "unreadable result")
+        return
+    if "error" in d:
+        rep.add(h, layer, "goss run", "fail", d["error"])
+        return
+    for r in sorted(d.get("results", []), key=lambda x: (x.get("resource-type", ""), x.get("resource-id", ""))):
+        name = f"{r.get('resource-type', '')}:{r.get('resource-id', '')}:{r.get('property', '')}"
+        st = "skip" if r.get("skipped") else "pass" if r.get("successful") else "fail"
+        ev = r.get("summary-line", "") if st != "pass" else (r.get("found") or [""])[0] if isinstance(r.get("found"), list) else ""
+        if st == "fail" and layer == "L3" and r.get("resource-id") == "l3-no-failed-units":
+            try:  # Goss can't show the command's output; name the failed units from the runner
+                ip = str(next(s["ip"] for s in load_specs() if s["hostname"] == h))
+                ev = "failed units: " + (ssh(ip, "systemctl list-units --state=failed --no-legend --plain | awk '{print $1}' | paste -sd' '").stdout.strip() or "?")
+            except Exception:
+                pass
+        rep.add(h, layer, name, st, ev)
+
+
+def l3(rep, hosts, out, specs):
+    """L3 OS baseline for every host; L4 app checks for hosts whose role has tests/apps/<role>.goss.yaml.j2."""
     if not hosts:
         return
     os.makedirs(out, exist_ok=True)
@@ -150,29 +184,9 @@ def l3(rep, hosts, out):
                        cwd=os.path.join(ROOT, "ansible"), env=env, capture_output=True, text=True, timeout=900)
     open(os.path.join(out, "verify-ansible.log"), "w").write(p.stdout + p.stderr)
     for h in hosts:
-        f = os.path.join(out, f"{h}.l3.json")
-        if not os.path.exists(f):
-            rep.add(h, "L3", "goss run", "fail", "no result (see verify-ansible.log)")
-            continue
-        try:
-            d = json.load(open(f))
-        except ValueError:
-            rep.add(h, "L3", "goss run", "fail", "unreadable result")
-            continue
-        if "error" in d:
-            rep.add(h, "L3", "goss run", "fail", d["error"])
-            continue
-        for r in sorted(d.get("results", []), key=lambda x: (x.get("resource-type", ""), x.get("resource-id", ""))):
-            name = f"{r.get('resource-type', '')}:{r.get('resource-id', '')}:{r.get('property', '')}"
-            st = "skip" if r.get("skipped") else "pass" if r.get("successful") else "fail"
-            ev = r.get("summary-line", "") if st != "pass" else (r.get("found") or [""])[0] if isinstance(r.get("found"), list) else ""
-            if st == "fail" and r.get("resource-id") == "l3-no-failed-units":
-                try:  # Goss can't show the command's output; name the failed units from the runner
-                    ip = str(next(s["ip"] for s in load_specs() if s["hostname"] == h))
-                    ev = "failed units: " + (ssh(ip, "systemctl list-units --state=failed --no-legend --plain | awk '{print $1}' | paste -sd' '").stdout.strip() or "?")
-                except Exception:
-                    pass
-            rep.add(h, "L3", name, st, ev)
+        goss_rows(rep, h, "L3", os.path.join(out, f"{h}.l3.json"))
+        if app_tests(specs[h]["role"]):
+            goss_rows(rep, h, "L4", os.path.join(out, f"{h}.l4.json"))
 
 
 def gone(rep, entries, res, spec_hosts):
@@ -231,7 +245,7 @@ def main():
     for h in sorted(set(want) - set(reach)):
         rep.add(h, "L3", "goss run", "fail", "skipped: not reachable over SSH (L2)")
     if not a.no_l3:
-        l3(rep, reach, a.out)
+        l3(rep, reach, a.out, specs)
     gone(rep, [e for e in a.gone.split(",") if e], res, set(specs))
     os.makedirs(a.out, exist_ok=True)
     json.dump({"rows": rep.rows, "failed": len(rep.failed)}, open(os.path.join(a.out, "verify.json"), "w"), indent=1)
