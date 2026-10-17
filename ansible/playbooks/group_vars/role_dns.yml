@@ -25,10 +25,16 @@ app_adguard_querylog_interval: 168h
 app_adguard_stats_interval: 168h
 
 # ---- blocklists (id must be unique and stable)
+# Memory: guests have 768 MiB. If RAM gets tight, swap id 2 for HaGeZi Multi LIGHT (adblock/light.txt).
+# Do not add Threat Intelligence Feeds (tif.txt, ~1.95M entries): too large for these guests.
 app_adguard_filters:
   - id: 1
     name: AdGuard DNS filter
     url: https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
+    enabled: true
+  - id: 2
+    name: HaGeZi Multi PRO
+    url: https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/pro.txt
     enabled: true
 
 # ---- shared lists (empty today). Zones/hosts add theirs in the *_extra variables (appended to these).
