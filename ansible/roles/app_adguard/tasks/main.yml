@@ -172,11 +172,12 @@
   no_log: true
 
 # ---- Config converge. AdGuard rewrites its own YAML (defaults, migrations, filter timestamps, UI edits), so a byte
-# compare would never settle. The template is rendered to AdGuardHome.yaml.managed; a semantic check
-# (apps/adguard/adguard-drift.py) tests that every key the template sets has the same value in the live file.
-# Any drift (UI edit, hand edit, template change, missing file) -> live file overwritten from the template and the
-# service restarted. No drift -> nothing changes, no restart. Keys outside the template (query log/stats data in
-# data/, runtime state AdGuard keeps itself) are left alone.
+# compare would never settle. The template is rendered to AdGuardHome.yaml.managed (never the live path); it is
+# validated with `AdGuardHome --check-config` BEFORE anything touches the live file; a semantic check
+# (apps/adguard/adguard-drift.py) then tests that every key the template sets has the same value in the live file.
+# Any drift (UI edit, hand edit, template change, missing file) -> the whole live file is replaced by the validated
+# render and the service restarted. Settings the template does not mention therefore reset to AdGuard defaults on
+# drift. No drift -> nothing changes, no restart. Query log/stats data in data/ is never touched.
 - name: Drift check script
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../apps/adguard/adguard-drift.py"
@@ -193,6 +194,25 @@
     group: "{{ app_adguard_user }}"
     mode: "0600"
   no_log: true
+
+# Fails the play (and, with any_errors_fatal in site.yml, the rollout) on an invalid render. The live file, the
+# service and the other hosts are untouched at this point. Runs as the service user, same as the daemon.
+- name: Validate rendered config (AdGuardHome --check-config)
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ app_adguard_user }}"
+      - --
+      - "{{ app_adguard_dir }}/AdGuardHome"
+      - --check-config
+      - --no-check-update
+      - -c
+      - "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.managed"
+      - -w
+      - "{{ app_adguard_dir }}"
+  register: _adguard_check
+  changed_when: false
 
 - name: Retire the old applied marker
   ansible.builtin.file:
