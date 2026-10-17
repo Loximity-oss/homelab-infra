@@ -1,7 +1,16 @@
 # AdGuard Home, native binary (no Docker). Order: free port 53 -> binary -> admin secret -> config -> service -> healthcheck.
+# Config is code: apps/adguard/AdGuardHome.yaml.j2 + group_vars/role_dns.yml (+ zone_<z>.yml / host_vars overrides).
+- name: Required shared variables are loaded (group_vars/role_dns.yml)
+  ansible.builtin.assert:
+    that:
+      - app_adguard_upstreams is defined
+      - app_adguard_bind_hosts is defined
+      - app_adguard_filters is defined
+    fail_msg: "AdGuard shared vars missing: ansible/playbooks/group_vars/role_dns.yml not loaded for {{ inventory_hostname }}"
+
 - name: Packages
   ansible.builtin.apt:
-    name: [bind9-dnsutils]
+    name: [bind9-dnsutils, python3-yaml]
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -162,9 +171,21 @@
     _adguard_admin_hash: "{{ _adguard_hash_raw.content | b64decode | trim }}"
   no_log: true
 
-# ---- Config. AdGuard rewrites its own YAML (defaults, migrations, UI edits), so the rendered copy is kept as
-# AdGuardHome.yaml.managed and the live file is only replaced when the managed copy differs from the copy that
-# was last installed (.applied marker, written only after a successful install). A failed run therefore retries.
+# ---- Config converge. AdGuard rewrites its own YAML (defaults, migrations, filter timestamps, UI edits), so a byte
+# compare would never settle. The template is rendered to AdGuardHome.yaml.managed (never the live path); it is
+# validated with `AdGuardHome --check-config` BEFORE anything touches the live file; a semantic check
+# (apps/adguard/adguard-drift.py) then tests that every key the template sets has the same value in the live file.
+# Any drift (UI edit, hand edit, template change, missing file) -> the whole live file is replaced by the validated
+# render and the service restarted. Settings the template does not mention therefore reset to AdGuard defaults on
+# drift. No drift -> nothing changes, no restart. Query log/stats data in data/ is never touched.
+- name: Drift check script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../apps/adguard/adguard-drift.py"
+    dest: "{{ app_adguard_drift_script }}"
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Render config
   ansible.builtin.template:
     src: "{{ playbook_dir }}/../../apps/adguard/AdGuardHome.yaml.j2"
@@ -174,22 +195,46 @@
     mode: "0600"
   no_log: true
 
-- name: Managed config checksum
-  ansible.builtin.stat:
-    path: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.managed"
-    checksum_algorithm: sha256
-  register: _adguard_managed
+# Fails the play (and, with any_errors_fatal in site.yml, the rollout) on an invalid render. The live file, the
+# service and the other hosts are untouched at this point. Runs as the service user, same as the daemon.
+- name: Validate rendered config (AdGuardHome --check-config)
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ app_adguard_user }}"
+      - --
+      - "{{ app_adguard_dir }}/AdGuardHome"
+      - --check-config
+      - --no-check-update
+      - -c
+      - "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.managed"
+      - -w
+      - "{{ app_adguard_dir }}"
+  register: _adguard_check
+  changed_when: false
 
-- name: Last installed config checksum
-  ansible.builtin.stat:
+- name: Retire the old applied marker
+  ansible.builtin.file:
     path: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.applied"
-    checksum_algorithm: sha256
-  register: _adguard_applied
+    state: absent
 
 - name: Live config present
   ansible.builtin.stat:
     path: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml"
   register: _adguard_live
+
+- name: Config drift check (managed keys vs live; prints key paths only)
+  ansible.builtin.command: "{{ app_adguard_drift_script }} {{ app_adguard_conf_dir }}/AdGuardHome.yaml.managed {{ app_adguard_conf_dir }}/AdGuardHome.yaml"
+  register: _adguard_drift
+  failed_when: _adguard_drift.rc not in [0, 1, 2]
+  changed_when: false
+  when: _adguard_live.stat.exists
+
+- name: Drift found (these keys will be reverted to the template)
+  ansible.builtin.debug:
+    msg: "{{ _adguard_drift.stdout_lines }}"
+  when: _adguard_drift.rc | default(0) != 0
 
 - name: Install config
   ansible.builtin.copy:
@@ -199,21 +244,9 @@
     owner: "{{ app_adguard_user }}"
     group: "{{ app_adguard_user }}"
     mode: "0600"
-  when: >-
-    not _adguard_live.stat.exists or not _adguard_applied.stat.exists or
-    _adguard_applied.stat.checksum != _adguard_managed.stat.checksum
+  when: not _adguard_live.stat.exists or _adguard_drift.rc | default(1) != 0
   no_log: true
   notify: restart adguardhome
-
-- name: Record installed config
-  ansible.builtin.copy:
-    src: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.managed"
-    dest: "{{ app_adguard_conf_dir }}/AdGuardHome.yaml.applied"
-    remote_src: true
-    owner: "{{ app_adguard_user }}"
-    group: "{{ app_adguard_user }}"
-    mode: "0600"
-  no_log: true
 
 # ---- Service
 - name: Systemd unit

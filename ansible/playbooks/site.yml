@@ -12,8 +12,13 @@
     - base_common
 
 # Every `role: dns` guest in any zone is an AdGuard resolver (secret path and OpenBao namespace follow its zone).
+# One host at a time, sorted: a bad config or failed healthcheck stops the rollout after the first host, so at most
+# one resolver of a zone pair is restarted/broken at once.
 - name: AdGuard DNS
   hosts: role_dns
+  serial: 1
+  order: sorted
+  any_errors_fatal: true
   roles:
     - app_adguard
 
