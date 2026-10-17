@@ -1,0 +1,13 @@
+hostname: hm1-wifi-dns01
+vmid: 501
+type: lxc
+role: dns
+os: ubuntu2604
+ip: 192.168.69.10
+cores: 1
+memory_mb: 768
+disk_gb: 8
+datastore: lvmt-sata01
+owner: faris
+patch: ring1
+description: AdGuard Home DNS for WiFi clients (1 of 2)
