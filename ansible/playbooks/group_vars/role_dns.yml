@@ -1,0 +1,42 @@
+# AdGuard Home: the ONE shared configuration for every `role: dns` guest in every zone (rendered by
+# apps/adguard/AdGuardHome.yaml.j2). Change it here, by PR. Zone/host specifics only as small overrides in
+# group_vars/zone_<zone>.yml or host_vars/<hostname>.yml (zone_* beats role_dns); see docs/apps/adguard.md.
+# No secrets here: the admin password hash comes from OpenBao-generated app secrets via the role.
+
+# ---- listen
+app_adguard_http_bind: 0.0.0.0
+app_adguard_http_port: 80
+app_adguard_bind_hosts:
+  - 0.0.0.0
+app_adguard_dns_port: 53
+
+# ---- upstreams
+app_adguard_upstream_mode: parallel
+app_adguard_upstreams:
+  - https://cloudflare-dns.com/dns-query
+  - https://dns.quad9.net/dns-query
+app_adguard_bootstrap:
+  - 1.1.1.1
+  - 9.9.9.9
+app_adguard_cache_size: 4194304
+
+# ---- query log / statistics retention
+app_adguard_querylog_interval: 168h
+app_adguard_stats_interval: 168h
+
+# ---- blocklists (id must be unique and stable)
+app_adguard_filters:
+  - id: 1
+    name: AdGuard DNS filter
+    url: https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
+    enabled: true
+
+# ---- shared lists (empty today). Zones/hosts add theirs in the *_extra variables (appended to these).
+app_adguard_rewrites: []          # [{domain: x.example, answer: 192.0.2.1}]
+app_adguard_user_rules: []        # AdGuard filtering rules, e.g. "||ads.example^"
+app_adguard_clients: []           # persistent clients in AdGuard's schema
+app_adguard_allowed_clients: []   # empty = everyone may query
+app_adguard_disallowed_clients: []
+app_adguard_rewrites_extra: []
+app_adguard_user_rules_extra: []
+app_adguard_clients_extra: []
