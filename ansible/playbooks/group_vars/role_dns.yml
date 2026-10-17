@@ -24,17 +24,25 @@ app_adguard_cache_size: 4194304
 app_adguard_querylog_interval: 168h
 app_adguard_stats_interval: 168h
 
-# ---- blocklists (id must be unique and stable)
-# Memory: guests have 768 MiB. If RAM gets tight, swap id 2 for HaGeZi Multi LIGHT (adblock/light.txt).
-# Do not add Threat Intelligence Feeds (tif.txt, ~1.95M entries): too large for these guests.
+# ---- blocklists (id must be unique and stable; never reuse a retired id, a same-id URL swap keeps the old file)
+# Retired: id 2 (HaGeZi Multi PRO). Guests have 1 GiB. Do not add Threat Intelligence Feeds (tif.txt, ~1.95M rules).
+# All URLs are the AdGuard-hosted registry copies (Faris's choice).
 app_adguard_filters:
   - id: 1
     name: AdGuard DNS filter
     url: https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
     enabled: true
-  - id: 2
-    name: HaGeZi Multi PRO
-    url: https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/pro.txt
+  - id: 3
+    name: Phishing URL Blocklist (PhishTank/OpenPhish)
+    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_30.txt
+    enabled: true
+  - id: 4
+    name: Malicious URL Blocklist (URLhaus)
+    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_11.txt
+    enabled: true
+  - id: 5
+    name: Stalkerware Indicators List
+    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_31.txt
     enabled: true
 
 # ---- shared lists (empty today). Zones/hosts add theirs in the *_extra variables (appended to these).
