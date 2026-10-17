@@ -1,6 +1,6 @@
 # Read-only status report, runs at the end of every apply (tag adguard_status). Changes nothing on the guest.
 # One summary line per host in the apply log. Hard failures: service not active; an enabled filter with 0 rules
-# after ~60s (AdGuard downloads lists asynchronously after a restart). Everything else is reported, not fatal.
+# after ~60s (on a new guest or new filter id AdGuard downloads the list asynchronously after the start). Everything else is reported, not fatal.
 # No credentials are used (rule counts come from the filter files, not the API), so no secrets can reach the log.
 - name: AdGuard status | service state
   ansible.builtin.command: systemctl is-active AdGuardHome
@@ -8,17 +8,19 @@
   failed_when: false
   changed_when: false
 
+# ignore_errors, not failed_when: with retries/until Ansible marks the task failed when the retries are exhausted,
+# whatever failed_when says. ignore_errors lets the report and the assert (with its message) still run.
 - name: AdGuard status | rules per enabled filter (waits up to ~60s for the async download)
   ansible.builtin.command:
     argv:
       - awk
-      - '!/^[[:space:]]*($|[!#])/ {n++} END {print n+0}'
+      - '!/^[[:space:]]*($|!|#|\[)/ {n++} END {print n+0}'
       - "{{ app_adguard_dir }}/data/filters/{{ item.id }}.txt"
   loop: "{{ app_adguard_filters | selectattr('enabled') | list }}"
   loop_control:
     label: "{{ item.id }} {{ item.name }}"
   register: _adguard_st_rules
-  failed_when: false
+  ignore_errors: true
   changed_when: false
   retries: 12
   delay: 5
@@ -44,7 +46,7 @@
 
 - name: AdGuard status | summary
   ansible.builtin.set_fact:
-    _adguard_st_rule_list: "{{ _adguard_st_rule_list | default([]) + [item.item.name ~ '=' ~ ((item.stdout | int) if item.rc == 0 else 0)] }}"
+    _adguard_st_rule_list: "{{ _adguard_st_rule_list | default([]) + [item.item.name ~ '=' ~ ((item.stdout | int) if item.rc | default(1) == 0 else 0)] }}"
   loop: "{{ _adguard_st_rules.results }}"
   loop_control:
     label: "{{ item.item.id }}"
