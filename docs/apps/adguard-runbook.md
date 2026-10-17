@@ -7,19 +7,36 @@ Hosts: every `role: dns` guest (group `role_dns`); today `hm1-iot-dns01/02` (VMI
 - **Manual edits are reverted.** Editing `AdGuardHome.yaml` on a guest or in the UI (users, DHCP, clients, rewrites, rules, filters, upstreams, retention) is detected at the next apply (nightly drift or any merge), overwritten from the template, and AdGuard restarts. The apply log shows the reverted key paths. If a UI change is wanted, put it in the PR. Query log and stats data are not affected.
 - Never log in to edit config; for a hotfix during an incident use the UI/ssh, then codify via PR before the next apply.
 
+## Status report in the apply log
+Every apply of a `role_dns` guest ends with a read-only task `AdGuard status | report` (tag `adguard_status`). It is the way to see the guests when SSH from CT 100 is firewalled: applies run from CT 300. Find it in the apply log of the merged PR (and in the nightly drift apply log), one line per host:
+
+`ADGUARD-STATUS hm1-iot-dns01: service=active rules=[AdGuard DNS filter=<n>, HaGeZi Multi PRO=<n>] journal_err_10m=0 drift_rc=0 dig=ok <ip> OK`
+
+- `service`: `systemctl is-active AdGuardHome`. Anything but `active` fails the play.
+- `rules`: rule count per enabled filter, counted from `/opt/AdGuardHome/data/filters/<id>.txt` (lines that are not blank, not comments `!`/`#` and not the `[Adblock Plus ...]` header). HaGeZi Multi PRO should be roughly 200k. An enabled filter with 0 rules (or missing file) after ~60s of retries fails the play; the failure message names the host and the counts, and the report line is printed before it.
+- Lists are downloaded only on a new guest or when a filter has a new id. An existing guest loads its lists from disk at start and keeps the old file if a refresh fails, so a count there can be stale rather than fresh. The 60s wait matters mainly for new guests and new ids.
+- **Swapping a list under the same id** (e.g. changing the URL of id 2 from PRO to LIGHT) keeps showing the old file's count until AdGuard refreshes it (its periodic filter update, or an update in the UI). When swapping, use a new filter id so the new list is downloaded at once, and remove the old one.
+- `journal_err_10m`: lines matching `error|failed` in `journalctl -u AdGuardHome --since -10min`. Not fatal. Non-zero usually means a failed list download or upstream problem: read the journal on the guest.
+- `drift_rc`: the drift script run after the converge, managed vs live config. 0 in sync, 1 drifted keys, 2 cannot compare. Expected 0 after a normal apply; not fatal.
+- `dig`: answer for example.com from 127.0.0.1, `FAIL` when none. Not fatal here (the healthcheck earlier in the role already retries).
+- Last word `OK` = nothing to look at; `WARN` = at least one of journal errors, drift rc != 0 or dig FAIL. The play fails (with a message naming the host) only for the two hard conditions above. Rollout is serial: 1, so a failing host stops the rollout before the next.
+- No credentials are involved (counts come from files, not the admin API), so nothing sensitive is in the log.
+- The report only runs as part of an apply (it is the last block of the role, merge or nightly drift apply); there is no separate way to trigger it. To look at a guest between applies use the commands under Check (from CT 300).
+
 ## Check
 - `systemctl is-active AdGuardHome`
 - `dig +short @127.0.0.1 example.com` (answer expected); from a client in the same zone `dig @<guest ip> example.com`
 - `curl -sI http://127.0.0.1/` (200 or 302)
 - `journalctl -u AdGuardHome -n 50 --no-pager`
 - Drift now, read-only: `hm1-adguard-drift /opt/AdGuardHome/conf/AdGuardHome.yaml.managed /opt/AdGuardHome/conf/AdGuardHome.yaml; echo rc=$?` (0 in sync, 1 lists drifted key paths, 2 cannot compare)
-- Memory and blocklists: `free -m` and `systemctl status AdGuardHome` (memory line) on the guest; guests have 768 MiB. Before the Multi PRO list the iot pair used about 107 MiB. Rule count per list is in the UI (Filters > DNS blocklists).
+- Memory and blocklists: `free -m` and `systemctl status AdGuardHome` (memory line) on the guest; guests have 768 MiB. Before the Multi PRO list the iot pair used about 107 MiB. Rule count per list: the status report above, or the UI (Filters > DNS blocklists).
 
 ## Common problems
 - **Service fails with "address already in use" on :53**: the resolved stub is back. Check `/etc/systemd/resolved.conf.d/adguardhome.conf`, `ss -lntup | grep :53`, re-run the apply.
 - **Guest cannot resolve (apt/download)**: `/etc/resolv.conf` must not point at 127.0.0.53; it should link to `/run/systemd/resolve/resolv.conf`, or use AdGuard on 127.0.0.1.
 - **Upstream (DoH) failures**: check the guest reaches 1.1.1.1 / 9.9.9.9 and TCP 443 outbound (UniFi rules for the guest's zone).
-- **Memory tight / OOM after adding blocklists**: swap filter id 2 (HaGeZi Multi PRO) for HaGeZi Multi LIGHT in `role_dns.yml`: url `https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/light.txt`, name `HaGeZi Multi LIGHT`, by PR. Do not add the Threat Intelligence Feeds list (`tif.txt`, about 1.95M entries): too large for these guests.
+- **Status fails with an enabled filter at 0 rules**: the list download failed (DNS/egress to the list host, e.g. cdn.jsdelivr.net, or too little memory). Check `journalctl -u AdGuardHome` and egress rules, then re-run the apply.
+- **Memory tight / OOM after adding blocklists**: replace filter id 2 (HaGeZi Multi PRO) by HaGeZi Multi LIGHT in `role_dns.yml` under a **new id**: url `https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/light.txt`, name `HaGeZi Multi LIGHT`, by PR (see the same-id note above). Do not add the Threat Intelligence Feeds list (`tif.txt`, about 1.95M entries): too large for these guests.
 - **AdGuard restarts at every apply**: a permanent drift. The apply log lists the key path; AdGuard normalises that value differently from the template. Align the value in the vars by PR.
 - **AdGuard rejects the config after a template change** (service fails to start, healthcheck fails): revert the PR; the next apply reinstalls the previous config.
 - **First apply failed at "Write once to OpenBao"**: policy or token problem (platform): the ci-apply policy needs create on `<zone>/secret/data/apps/adguard/*` and the zone namespace must exist (`apply.sh`). No hash file was written, so the next run retries.
