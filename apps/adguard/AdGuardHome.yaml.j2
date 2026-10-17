@@ -1,37 +1,38 @@
-# Managed by Ansible (role app_adguard). Edits made in the UI are overwritten on the next change of this template.
+# Managed by Ansible (role app_adguard, vars: group_vars/role_dns.yml + zone/host overrides). Do not edit on the guest:
+# any difference in the keys below (UI edits included) is reverted and the service restarted at the next apply.
 schema_version: 34
 http:
-  address: 0.0.0.0:{{ app_adguard_http_port }}
+  address: {{ (app_adguard_http_bind ~ ':' ~ app_adguard_http_port) | to_json }}
   session_ttl: 720h
 users:
-  - name: {{ app_adguard_admin_user }}
-    password: '{{ _adguard_admin_hash }}'
+  - name: {{ app_adguard_admin_user | to_json }}
+    password: {{ _adguard_admin_hash | to_json }}
 dns:
-  bind_hosts:
-    - 0.0.0.0
+  bind_hosts: {{ app_adguard_bind_hosts | to_json }}
   port: {{ app_adguard_dns_port }}
-  upstream_mode: parallel
-  upstream_dns:
-{% for u in app_adguard_upstreams %}
-    - {{ u }}
-{% endfor %}
-  bootstrap_dns:
-{% for b in app_adguard_bootstrap %}
-    - {{ b }}
-{% endfor %}
+  upstream_mode: {{ app_adguard_upstream_mode }}
+  upstream_dns: {{ app_adguard_upstreams | to_json }}
+  bootstrap_dns: {{ app_adguard_bootstrap | to_json }}
   cache_enabled: true
   cache_size: {{ app_adguard_cache_size }}
+  blocking_mode: default
+  allowed_clients: {{ app_adguard_allowed_clients | to_json }}
+  disallowed_clients: {{ app_adguard_disallowed_clients | to_json }}
+tls:
+  enabled: false
+dhcp:
+  enabled: false
 querylog:
   enabled: true
   file_enabled: true
   interval: {{ app_adguard_querylog_interval }}
 statistics:
   enabled: true
-  interval: 168h
+  interval: {{ app_adguard_stats_interval }}
 filtering:
   filtering_enabled: true
-filters:
-  - enabled: true
-    url: https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
-    name: AdGuard DNS filter
-    id: 1
+  rewrites: {{ (app_adguard_rewrites + app_adguard_rewrites_extra) | to_json }}
+filters: {{ app_adguard_filters | to_json }}
+user_rules: {{ (app_adguard_user_rules + app_adguard_user_rules_extra) | to_json }}
+clients:
+  persistent: {{ (app_adguard_clients + app_adguard_clients_extra) | to_json }}
