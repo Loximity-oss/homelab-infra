@@ -13,11 +13,13 @@ Hosts: every `role: dns` guest (group `role_dns`); today `hm1-iot-dns01/02` (VMI
 - `curl -sI http://127.0.0.1/` (200 or 302)
 - `journalctl -u AdGuardHome -n 50 --no-pager`
 - Drift now, read-only: `hm1-adguard-drift /opt/AdGuardHome/conf/AdGuardHome.yaml.managed /opt/AdGuardHome/conf/AdGuardHome.yaml; echo rc=$?` (0 in sync, 1 lists drifted key paths, 2 cannot compare)
+- Memory and blocklists: `free -m` and `systemctl status AdGuardHome` (memory line) on the guest; guests have 768 MiB. Before the Multi PRO list the iot pair used about 107 MiB. Rule count per list is in the UI (Filters > DNS blocklists).
 
 ## Common problems
 - **Service fails with "address already in use" on :53**: the resolved stub is back. Check `/etc/systemd/resolved.conf.d/adguardhome.conf`, `ss -lntup | grep :53`, re-run the apply.
 - **Guest cannot resolve (apt/download)**: `/etc/resolv.conf` must not point at 127.0.0.53; it should link to `/run/systemd/resolve/resolv.conf`, or use AdGuard on 127.0.0.1.
 - **Upstream (DoH) failures**: check the guest reaches 1.1.1.1 / 9.9.9.9 and TCP 443 outbound (UniFi rules for the guest's zone).
+- **Memory tight / OOM after adding blocklists**: swap filter id 2 (HaGeZi Multi PRO) for HaGeZi Multi LIGHT in `role_dns.yml`: url `https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/light.txt`, name `HaGeZi Multi LIGHT`, by PR. Do not add the Threat Intelligence Feeds list (`tif.txt`, about 1.95M entries): too large for these guests.
 - **AdGuard restarts at every apply**: a permanent drift. The apply log lists the key path; AdGuard normalises that value differently from the template. Align the value in the vars by PR.
 - **AdGuard rejects the config after a template change** (service fails to start, healthcheck fails): revert the PR; the next apply reinstalls the previous config.
 - **First apply failed at "Write once to OpenBao"**: policy or token problem (platform): the ci-apply policy needs create on `<zone>/secret/data/apps/adguard/*` and the zone namespace must exist (`apply.sh`). No hash file was written, so the next run retries.
