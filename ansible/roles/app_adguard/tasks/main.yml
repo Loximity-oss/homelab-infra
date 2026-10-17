@@ -289,3 +289,9 @@
   retries: 10
   delay: 3
   until: _adguard_hc.status in [200, 302]
+  changed_when: false
+
+# ---- Read-only status report (summary line per host in the apply log; hard-fails only on service down / empty filter)
+- name: Status report
+  ansible.builtin.import_tasks: status.yml
+  tags: [adguard_status]
