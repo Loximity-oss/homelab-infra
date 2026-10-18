@@ -1,0 +1,15 @@
+# Apply patches to ring 1. Never reboots. docs/apps/patching.md
+#   Sev1/2 auto (6-hourly workflow):  ansible-playbook patch.yml -e patch_max_sev=2 -e patch_snapshot=pre-patch_<date>_<time>
+#   Monthly bundle (Sev1-4), only after Faris approved the bundle PR in Gitea:
+#                                     ansible-playbook patch.yml -e patch_max_sev=4 -e patch_snapshot=...
+# The pre-patch snapshot is taken by the pipeline (Proxmox token) BEFORE this runs; the play refuses to run without its name.
+# One host at a time, sorted: a failed service check stops the rollout after the first bad host (DNS pairs, k3s quorum).
+- name: Patch ring 1
+  hosts: patch_ring1
+  serial: 1
+  order: sorted
+  any_errors_fatal: true
+  gather_facts: true
+  roles:
+    - patch_scan
+    - patch_apply

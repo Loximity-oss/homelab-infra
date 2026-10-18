@@ -1,0 +1,26 @@
+name: patch
+# Ring-1 patching (docs/patching-pipeline.md): read-only scan every 6 h, Sev1/2 auto-apply on ring 1 (pre-patch_
+# snapshot first, never reboots), 'patch: reboot <host>' issues for Faris. Runs on the apply runner (guest SSH key,
+# apply token for snapshots). A failure exits 1 -> pipeline.failed (workflow patch) -> SRE.
+on:
+  schedule:
+    - cron: "40 1,7,13,19 * * *" # 09:40 / 15:40 / 21:40 / 03:40 MYT (clear of drift 02:30 and verify 03:00)
+  workflow_dispatch: {}
+jobs:
+  patch:
+    runs-on: host-apply
+    steps:
+      - name: scan, Sev1/2 on ring 1, reboot issues
+        env:
+          GIT_TOKEN: ${{ gitea.token }}
+          SERVER: ${{ gitea.server_url }}
+          REPO: ${{ gitea.repository }}
+        run: |
+          rm -rf base
+          git clone -q "${SERVER%%://*}://ci:${GIT_TOKEN}@${SERVER#*://}/${REPO}.git" base
+          # One patch run at a time (scan / bundle / monthly).
+          if [ -d /var/lib/devops/locks ]; then
+            flock -w 7200 /var/lib/devops/locks/patch.lock bash base/scripts/ci-patch.sh scan
+          else
+            bash base/scripts/ci-patch.sh scan
+          fi

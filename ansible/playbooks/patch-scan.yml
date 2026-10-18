@@ -1,0 +1,8 @@
+# Read-only patch scan (every 6 h, scheduled workflow = infrastructure-engineer). Changes no package.
+# Writes <patch_out>/<host>.scan.json on the runner (Sev1-4 per package, reboot hint). docs/apps/patching.md
+- name: Patch scan (all pipeline guests except ring0)
+  hosts: all:!patch_ring0
+  gather_facts: true
+  serial: 5
+  roles:
+    - patch_scan

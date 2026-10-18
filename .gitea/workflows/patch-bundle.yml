@@ -1,0 +1,25 @@
+name: patch-bundle
+# Monthly Sev3/4 bundle (docs/patching-pipeline.md): on the 25th a fresh scan becomes a PR
+# patches/hm1/<YYYY-MM>.{md,json} with the packages per ring-1 host and release-note links. The PR is Class C
+# (policy/classify.py: patches/*): only Faris's approval lets the last-Saturday job (patch-monthly) apply it.
+on:
+  schedule:
+    - cron: "0 1 25 * *" # 25th 09:00 MYT
+  workflow_dispatch: {}
+jobs:
+  bundle:
+    runs-on: host-apply
+    steps:
+      - name: scan, open the monthly bundle PR
+        env:
+          GIT_TOKEN: ${{ gitea.token }}
+          SERVER: ${{ gitea.server_url }}
+          REPO: ${{ gitea.repository }}
+        run: |
+          rm -rf base
+          git clone -q "${SERVER%%://*}://ci:${GIT_TOKEN}@${SERVER#*://}/${REPO}.git" base
+          if [ -d /var/lib/devops/locks ]; then
+            flock -w 7200 /var/lib/devops/locks/patch.lock bash base/scripts/ci-patch.sh bundle
+          else
+            bash base/scripts/ci-patch.sh bundle
+          fi

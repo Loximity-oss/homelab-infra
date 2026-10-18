@@ -9,9 +9,14 @@ Subcommands:
   refresh-open [EXCEPT]     update every open, classified, non-WIP PR behind main (re-plan after main moved)
   pr-of-commit SHA          print "number head_sha" of the PR that produced a commit
   issue-upsert TITLE LABEL FILE   open or comment on an open issue with this title
+  issue-ensure TITLE LABEL FILE   open once; comment only if FILE's <!-- digest:x --> marker is new (no 6-hourly spam)
   issue-close TITLE TEXT    comment and close the open issue with this title (if any)
+  pr-find BRANCH            print "number state merged" of the newest PR from BRANCH (any state), or nothing
+  pr-open BRANCH TITLE FILE open a PR BRANCH -> main, print its number
+  pr-gate BRANCH USER       exit 0 and print the number if a PR from BRANCH is merged with a current APPROVED
+                            review by USER (not dismissed, not stale); otherwise exit 1
 """
-import json, os, sys, urllib.request, urllib.error
+import json, os, re, sys, urllib.parse, urllib.request, urllib.error
 
 S, R, T = os.environ["SERVER"].rstrip("/"), os.environ["REPO"], os.environ["GITEA_API_TOKEN"]
 
@@ -35,6 +40,24 @@ def api(method, path, body=None, ok404=False, ok_codes=()):
 def label_ids(names):
     have = {l["name"]: l["id"] for l in api("GET", f"/repos/{R}/labels?limit=100")}
     return [have[n] for n in names if n in have]
+
+
+def open_issue(title):
+    q = urllib.parse.quote(title)
+    for i in api("GET", f"/repos/{R}/issues?state=open&type=issues&limit=50&q={q}") or []:
+        if i["title"] == title:
+            return i
+    return None
+
+
+def pulls_from(branch, state):
+    for page in range(1, 6):
+        ps = api("GET", f"/repos/{R}/pulls?state={state}&sort=recentupdate&limit=50&page={page}") or []
+        for p in ps:
+            if (p.get("head") or {}).get("ref") == branch:
+                yield p
+        if len(ps) < 50:
+            return
 
 
 def main(cmd, *a):
@@ -80,6 +103,32 @@ def main(cmd, *a):
             if i["title"] == title:
                 api("POST", f"/repos/{R}/issues/{i['number']}/comments", {"body": body}); return
         api("POST", f"/repos/{R}/issues", {"title": title, "body": body, "labels": label_ids([label])})
+    elif cmd == "issue-ensure":
+        title, label, body = a[0], a[1], open(a[2]).read()
+        m = re.search(r"<!-- digest:[0-9a-f]+ -->", body)
+        i = open_issue(title)
+        if not i:
+            api("POST", f"/repos/{R}/issues", {"title": title, "body": body, "labels": label_ids([label])}); return
+        seen = [i.get("body") or ""] + [c.get("body") or "" for c in api("GET", f"/repos/{R}/issues/{i['number']}/comments") or []]
+        if not m or not any(m.group(0) in s for s in seen):
+            api("POST", f"/repos/{R}/issues/{i['number']}/comments", {"body": body})
+    elif cmd == "pr-find":
+        p = next(pulls_from(a[0], "all"), None)
+        print(f"{p['number']} {p['state']} {str(bool(p.get('merged'))).lower()}" if p else "")
+    elif cmd == "pr-open":
+        p = api("POST", f"/repos/{R}/pulls", {"head": a[0], "base": "main", "title": a[1], "body": open(a[2]).read()})
+        print(p["number"])
+    elif cmd == "pr-gate":
+        branch, user = a[0], a[1]
+        for p in pulls_from(branch, "closed"):
+            if not p.get("merged"):
+                continue
+            revs = api("GET", f"/repos/{R}/pulls/{p['number']}/reviews") or []
+            if any((r.get("user") or {}).get("login") == user and r.get("state") == "APPROVED"
+                   and not r.get("dismissed") and not r.get("stale") for r in revs):
+                print(p["number"]); return
+            sys.exit(f"{branch}: PR #{p['number']} merged without a current approval by {user}")
+        sys.exit(f"{branch}: no merged PR")
     else:
         sys.exit(__doc__)
 
