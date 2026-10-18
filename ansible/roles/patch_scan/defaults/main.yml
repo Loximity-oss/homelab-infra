@@ -1,0 +1,6 @@
+# Where the runner collects results (one file per host). The workflow sets PATCH_OUT.
+patch_scan_out: "{{ lookup('env', 'PATCH_OUT') | default('/tmp/patch', true) }}"
+# Package names that usually need a reboot to take effect (hint only; the reboot decision is always Faris's).
+patch_scan_reboot_hint_regex: '^(linux-image|linux-modules|linux-generic|kernel(-core)?$|libc6$|glibc$|systemd$|dbus|openssl$|libssl)'
+# Severity feeds, queried on the runner. Unresolvable CVE => fail safe to Sev3 (never auto-applied).
+patch_scan_ubuntu_cve_url: "https://ubuntu.com/security/cves/{cve}.json"

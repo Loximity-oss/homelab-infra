@@ -1,0 +1,8 @@
+# Highest severity number to apply: 2 = Sev1+Sev2 (auto), 4 = everything (monthly bundle, Faris approved).
+patch_max_sev: 2
+# Name of the pre-patch snapshot taken by the pipeline before this run: pre-patch_<YYYYmmdd>_<HHMM>. Required.
+patch_snapshot: ""
+patch_apply_snapshot_regex: '^pre-patch_[0-9]{8}_[0-9]{4}$'
+# Never patched by the team (protected.yaml); they run unattended security updates themselves.
+patch_apply_protected_vmids: [100, 300, 303]
+patch_apply_out: "{{ patch_scan_out }}"

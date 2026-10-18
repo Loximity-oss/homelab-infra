@@ -1,0 +1,88 @@
+- name: Refuse protected guests and ring 0
+  ansible.builtin.assert:
+    that:
+      - (vmid | int) not in patch_apply_protected_vmids
+      - "'patch_ring0' not in group_names"
+      - "'patch_ring1' in group_names"
+    fail_msg: "{{ inventory_hostname }} is not in ring 1 or is protected: never patched by this playbook"
+
+- name: A pre-patch snapshot was taken (name passed by the pipeline)
+  ansible.builtin.assert:
+    that:
+      - patch_snapshot is match(patch_apply_snapshot_regex)
+      - patch_max_sev | int in [1, 2, 3, 4]
+    fail_msg: "patch_snapshot must be pre-patch_<date>_<time> (taken before the run) and patch_max_sev 1-4"
+
+- name: Packages to apply (severity <= patch_max_sev)
+  ansible.builtin.set_fact:
+    patch_apply_list: "{{ patch_scan_result.packages | selectattr('severity', 'le', patch_max_sev | int) | map(attribute='name') | list }}"
+
+- name: Failed units before
+  ansible.builtin.command: systemctl list-units --failed --plain --no-legend --no-pager
+  register: patch_apply_failed_before
+  changed_when: false
+  failed_when: false
+
+- name: Apply (Debian family; only the classified packages)
+  ansible.builtin.apt:
+    name: "{{ patch_apply_list }}"
+    state: latest
+    only_upgrade: true
+    lock_timeout: 600
+  when: ansible_os_family == 'Debian' and patch_apply_list | length > 0
+  register: patch_apply_done_deb
+
+- name: Apply (Fedora; only the classified packages)
+  ansible.builtin.dnf:
+    name: "{{ patch_apply_list }}"
+    state: latest
+    lock_timeout: 600
+  when: ansible_os_family == 'RedHat' and patch_apply_list | length > 0
+  register: patch_apply_done_rpm
+
+# Never reboot here. A pending reboot is reported; Faris answers in Gitea (docs/apps/patching.md).
+- name: Reboot pending (Debian family)
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: patch_apply_reboot_deb
+  when: ansible_os_family == 'Debian'
+
+- name: Reboot pending (Fedora)
+  ansible.builtin.command: dnf needs-restarting -r
+  register: patch_apply_reboot_rpm
+  changed_when: false
+  failed_when: false
+  when: ansible_os_family == 'RedHat'
+
+- name: Failed units after
+  ansible.builtin.command: systemctl list-units --failed --plain --no-legend --no-pager
+  register: patch_apply_failed_after
+  changed_when: false
+  failed_when: false
+
+- name: Verify services (L3/L4 baseline and app checks, same role as the nightly verify)
+  ansible.builtin.include_role:
+    name: verify
+  vars:
+    verify_out: "{{ patch_apply_out }}"
+
+- name: No new failed units after patching
+  ansible.builtin.assert:
+    that: patch_apply_failed_after.stdout_lines | difference(patch_apply_failed_before.stdout_lines) | length == 0
+    fail_msg: "new failed units after patching {{ inventory_hostname }}: restore with the snapshot {{ patch_snapshot }} (SRE)"
+
+- name: Result to the runner
+  ansible.builtin.copy:
+    content: "{{ patch_apply_result | to_nice_json }}"
+    dest: "{{ patch_apply_out }}/{{ inventory_hostname }}.apply.json"
+    mode: "0640"
+  delegate_to: localhost
+  vars:
+    patch_apply_result:
+      host: "{{ inventory_hostname }}"
+      snapshot: "{{ patch_snapshot }}"
+      max_sev: "{{ patch_max_sev | int }}"
+      applied: "{{ patch_apply_list }}"
+      reboot_pending: "{{ (patch_apply_reboot_deb.stat.exists | default(false)) or ((patch_apply_reboot_rpm.rc | default(0)) == 1) }}"
+      reboot_hint: "{{ patch_scan_result.reboot_hint }}"
+      deferred: "{{ patch_scan_result.packages | rejectattr('severity', 'le', patch_max_sev | int) | map(attribute='name') | list }}"
