@@ -1,0 +1,72 @@
+# Local admin user with sudo (wheel) and a random password, generated once per instance and written to OpenBao FIRST
+# (create-only, cas=0) at <zone>/secret/guests/<hostname>/admin-<instance>. Never logged, never in Git.
+# sshd is NOT changed: PasswordAuthentication stays off, so the password works for console login and sudo only.
+# No SSH key is installed (none supplied). Only played on hosts listed in site.yml for this role.
+- name: Wheel group exists
+  ansible.builtin.group:
+    name: "{{ base_admin_user_group }}"
+    state: present
+
+- name: Admin user exists (no password change here)
+  ansible.builtin.user:
+    name: "{{ base_admin_user_name }}"
+    groups: "{{ base_admin_user_group }}"
+    append: true
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Sudoers drop-in for the wheel group (password required)
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/10-hm1-wheel
+    content: "%{{ base_admin_user_group }} ALL=(ALL) ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Check marker
+  ansible.builtin.stat:
+    path: /etc/hm1/admin-user-secret-stored
+  register: _admin_user_marker
+
+- name: Store and set the admin user password
+  when:
+    - not _admin_user_marker.stat.exists
+    - lookup('env', 'GUEST_SECRET_TOKEN') | length > 0
+  no_log: true
+  block:
+    - name: Generate password and instance id
+      ansible.builtin.set_fact:
+        _admin_user_instance: "{{ ansible_machine_id[:12] }}"
+        _admin_user_pw: "{{ lookup('ansible.builtin.password', '/dev/null', length=28, chars=['ascii_letters', 'digits']) }}"
+
+    - name: Write once to OpenBao (create-only)
+      ansible.builtin.uri:
+        url: "https://192.168.70.12:8200/v1/{{ 'secret' if lookup('env', 'BAO_ZONE_MODE') != 'mount' else 'secret-' ~ zone }}/data/guests/{{ inventory_hostname }}/admin-{{ _admin_user_instance }}"
+        method: POST
+        ca_path: /etc/openbao/ca.crt
+        headers: "{{ {'X-Vault-Token': lookup('env', 'GUEST_SECRET_TOKEN')} | combine({'X-Vault-Namespace': zone} if lookup('env', 'BAO_ZONE_MODE') != 'mount' else {}) }}"
+        body_format: json
+        body:
+          options: {cas: 0}
+          data: {username: "{{ base_admin_user_name }}", password: "{{ _admin_user_pw }}", vmid: "{{ vmid | string }}", created: "{{ ansible_date_time.iso8601 }}"}
+        status_code: [200, 204]
+      delegate_to: localhost
+
+    - name: Set admin password
+      ansible.builtin.user:
+        name: "{{ base_admin_user_name }}"
+        password: "{{ _admin_user_pw | password_hash('sha512') }}"
+
+    - name: Marker directory
+      ansible.builtin.file:
+        path: /etc/hm1
+        state: directory
+        mode: "0700"
+
+    - name: Marker
+      ansible.builtin.copy:
+        dest: /etc/hm1/admin-user-secret-stored
+        content: "stored in OpenBao {{ zone }}/secret/guests/{{ inventory_hostname }}/admin-{{ _admin_user_instance }}\n"
+        mode: "0600"
