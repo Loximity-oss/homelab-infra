@@ -17,5 +17,7 @@ for f in files:
 if everything:
     stacks = set(all_stacks)
 stacks &= set(all_stacks)  # deleted stacks are ignored
-ansible_all = any(f.startswith("ansible/") and not f.startswith("ansible/keys/") for f in files)
+# apps/<name>/ holds files the Ansible roles copy or template onto guests (unit files, configs, helper scripts), so a
+# change there must configure hosts too (issue #107: #101, #104 and #106 merged with "No hosts to configure").
+ansible_all = any((f.startswith("ansible/") and not f.startswith("ansible/keys/")) or f.startswith("apps/") for f in files)
 print(json.dumps({"files": files, "stacks": sorted(stacks), "hosts": sorted(hosts), "ansible_all": ansible_all}))
