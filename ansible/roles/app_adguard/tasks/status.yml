@@ -44,9 +44,15 @@
   failed_when: false
   changed_when: false
 
+# Reset first: the accumulator below must start empty on every run of this file (a second include in one play
+# would otherwise list every filter twice).
+- name: AdGuard status | reset rule list
+  ansible.builtin.set_fact:
+    _adguard_st_rule_list: []
+
 - name: AdGuard status | summary
   ansible.builtin.set_fact:
-    _adguard_st_rule_list: "{{ _adguard_st_rule_list | default([]) + [item.item.name ~ '=' ~ ((item.stdout | int) if item.rc | default(1) == 0 else 0)] }}"
+    _adguard_st_rule_list: "{{ _adguard_st_rule_list + [item.item.name ~ '=' ~ ((item.stdout | int) if item.rc | default(1) == 0 else 0)] }}"
   loop: "{{ _adguard_st_rules.results }}"
   loop_control:
     label: "{{ item.item.id }}"
@@ -61,7 +67,7 @@
     msg: >-
       ADGUARD-STATUS {{ inventory_hostname }}:
       service={{ _adguard_st_active.stdout | trim }}
-      rules=[{{ _adguard_st_rule_list | default([]) | join(', ') }}]
+      rules=[{{ _adguard_st_rule_list | join(', ') }}]
       journal_err_10m={{ _adguard_st_journal.stdout | trim }}
       drift_rc={{ _adguard_st_drift.rc }}
       dig={{ 'ok ' ~ (_adguard_st_dig.stdout_lines | first) if (_adguard_st_dig.rc == 0 and _adguard_st_dig.stdout | trim | length > 0) else 'FAIL' }}
@@ -73,5 +79,5 @@
       - _adguard_st_active.stdout | trim == 'active'
       - _adguard_st_rules.results | rejectattr('rc', 'equalto', 0) | list | length == 0
       - _adguard_st_rules.results | selectattr('rc', 'equalto', 0) | map(attribute='stdout') | map('int') | select('lt', 1) | list | length == 0
-    fail_msg: "AdGuard hard failure on {{ inventory_hostname }}: service={{ _adguard_st_active.stdout | trim }}, rules=[{{ _adguard_st_rule_list | default([]) | join(', ') }}] (an enabled filter has 0 rules or its file is missing after 60s)"
+    fail_msg: "AdGuard hard failure on {{ inventory_hostname }}: service={{ _adguard_st_active.stdout | trim }}, rules=[{{ _adguard_st_rule_list | join(', ') }}] (an enabled filter has 0 rules or its file is missing after 60s)"
     success_msg: "AdGuard hard checks passed on {{ inventory_hostname }}"
