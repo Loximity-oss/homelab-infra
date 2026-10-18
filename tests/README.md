@@ -21,6 +21,7 @@ Scope today: Ubuntu LXC + VM, Arch VM (`tests/os/arch.goss.yaml.j2`; btrfs root:
 Optional layer keyed by the spec `role` code: `tests/apps/<role>.goss.yaml.j2`. Only guests whose role has a file get L4 rows; verify output for every other guest is unchanged.
 - `ansible/roles/verify` renders the file to `/etc/hm1/goss/app.yaml` after the L3 result is written and runs Goss in a **separate run**, with its own result file `<host>.l4.json`. An app failure (or a render error) can neither hide nor break the L3 baseline result.
 - A missing, unreadable or error result is a **failure** ("no result"), never a pass.
+- Evidence: Goss can't show a command's output, so for a failed L4 command `scripts/verify.py` re-runs it over SSH from the rendered copy on the runner (`<host>.l4.yaml`) and shows its output (e.g. the drifted key paths). Every L4 command must therefore stay read-only.
 - Read-only, no credentials, loopback only.
 - Values come from `ansible/playbooks/group_vars/role_<role>.yml` (loaded by the verify play). Role defaults that the verify play does not load are written as `app_x | default(<same literal>)`; keep them in sync with the role.
 - Current file: `dns` = AdGuard Home (service, listeners, web UI, a DNS query, filter files, config drift).
