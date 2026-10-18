@@ -57,6 +57,15 @@
         dest: /etc/hm1/goss/app.yaml
         mode: "0640"
 
+    # Same render on the runner: scripts/verify.py re-runs a failed command from it over SSH to show its output,
+    # which Goss can't report (issue #102).
+    - name: App tests copy for the evidence (runner)
+      ansible.builtin.template:
+        src: "{{ verify_app_tests }}"
+        dest: "{{ verify_out }}/{{ inventory_hostname }}.l4.yaml"
+        mode: "0640"
+      delegate_to: localhost
+
     - name: Run (L4)
       ansible.builtin.command: /usr/local/bin/goss -g /etc/hm1/goss/app.yaml validate --format json --no-color
       register: verify_l4
