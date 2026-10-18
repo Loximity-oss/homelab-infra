@@ -147,6 +147,23 @@ def app_tests(role):
     return os.path.exists(os.path.join(ROOT, "tests", "apps", f"{role}.goss.yaml.j2"))
 
 
+def host_ip(h):
+    return str(next(s["ip"] for s in load_specs() if s["hostname"] == h))
+
+
+def l4_output(h, f, rid):
+    """Goss can't show a command's output. Re-run the failed L4 command from the rendered test file
+    (<host>.l4.yaml, written by ansible/roles/verify) over SSH and return its output. L4 commands are read-only by
+    contract (tests/README.md), so re-running one changes nothing. Any problem -> "" (keep Goss's summary)."""
+    try:
+        cmd = yaml.safe_load(open(f[:-len(".json")] + ".yaml"))["command"][rid]["exec"]
+        r = ssh(host_ip(h), cmd)
+        out = " ".join((r.stdout + r.stderr).split())
+        return f"output: {out}" if out else ""
+    except Exception:
+        return ""
+
+
 def goss_rows(rep, h, layer, f):
     """One report row per Goss result in f. Missing, unreadable or error result = one failed 'goss run' row."""
     if not os.path.exists(f):
@@ -166,10 +183,11 @@ def goss_rows(rep, h, layer, f):
         ev = r.get("summary-line", "") if st != "pass" else (r.get("found") or [""])[0] if isinstance(r.get("found"), list) else ""
         if st == "fail" and layer == "L3" and r.get("resource-id") == "l3-no-failed-units":
             try:  # Goss can't show the command's output; name the failed units from the runner
-                ip = str(next(s["ip"] for s in load_specs() if s["hostname"] == h))
-                ev = "failed units: " + (ssh(ip, "systemctl list-units --state=failed --no-legend --plain | awk '{print $1}' | paste -sd' '").stdout.strip() or "?")
+                ev = "failed units: " + (ssh(host_ip(h), "systemctl list-units --state=failed --no-legend --plain | awk '{print $1}' | paste -sd' '").stdout.strip() or "?")
             except Exception:
                 pass
+        if st == "fail" and layer == "L4" and r.get("resource-type") == "Command":
+            ev = l4_output(h, f, r.get("resource-id", "")) or ev
         rep.add(h, layer, name, st, ev)
 
 
