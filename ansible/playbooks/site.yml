@@ -11,6 +11,14 @@
   roles:
     - base_common
 
+# Local admin user with sudo and a write-once OpenBao password: this one host only (Faris 2026-10-18).
+# Matches no hosts (play skipped) anywhere else.
+- name: Admin user (hm1-dmz-app01 only)
+  hosts: hm1-dmz-app01
+  gather_facts: false
+  roles:
+    - base_admin_user
+
 # Every `role: dns` guest in any zone is an AdGuard resolver (secret path and OpenBao namespace follow its zone).
 # One host at a time, sorted: a bad config or failed healthcheck stops the rollout after the first host, so at most
 # one resolver of a zone pair is restarted/broken at once.
