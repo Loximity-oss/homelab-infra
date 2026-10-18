@@ -5,7 +5,8 @@ Prints JSON {"class": "A|B|C", "reasons": [...], "summary": {...}}.
 
 C (Faris): any delete/replace; tests/*; template VMIDs; any non-guest (host-level) resource; protected VMIDs/bridges; pipeline/policy/keys paths; UniFi;
            stack code (terraform/stacks/**/*.tf: adding, changing or deleting a stack);
-           template specs (terraform/templates/**) except a minor refresh.
+           template specs (terraform/templates/**) except a minor refresh;
+           patches/* (monthly Sev3/4 patch bundles: Faris approves each one, docs/patching-pipeline.md).
 B (Reviewer): modules, Ansible roles/playbooks, imports, updates to existing shr guests;
            minor template refresh (Faris decision 3, standards PR #17; see template_change).
 A (auto): everything else (new guests, updates outside shr, docs).
@@ -14,8 +15,9 @@ import argparse, fnmatch, json, pathlib, re, urllib.parse, yaml
 
 # terraform/stacks/*.tf = stack wiring (backend, providers, module call). Adding or deleting a stack adds or removes a
 # zone, and a deleted stack produces no plan at all (changed.py skips it), so it can never be judged from plans.
+# patches/*: a merged bundle is applied on the last Saturday only with Faris's approval (scripts/ci-patch.sh monthly).
 C_PATHS = ["host/*", ".gitea/*", "policy/*", "scripts/*", "secrets/*", ".sops.yaml", "ansible/keys/*", "terraform/stacks/*/unifi/*",
-           "terraform/stacks/*.tf", "tests/*"]   # tests/*: the guest test contract (decision 32 D2)
+           "terraform/stacks/*.tf", "tests/*", "patches/*"]   # tests/*: the guest test contract (decision 32 D2)
 B_PATHS = ["terraform/modules/*", "ansible/roles/*", "ansible/playbooks/*", "ansible/ansible.cfg"]
 # Only guest resources can be A/B. Anything else the pipeline can touch with DevOpsAdmin (pools, cluster options,
 # storage, network, SDN, firewall, ACLs, files on the host, ...) is host-level and therefore Class C.

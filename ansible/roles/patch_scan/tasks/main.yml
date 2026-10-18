@@ -1,0 +1,55 @@
+- name: Result directory on the runner
+  ansible.builtin.file:
+    path: "{{ patch_scan_out }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+
+- name: Refresh package metadata (Debian family)
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 600
+  changed_when: false
+  when: ansible_os_family == 'Debian'
+
+- name: Scan pending upgrades (Debian family, simulation only)
+  ansible.builtin.script: scan_apt.py
+  args:
+    executable: python3
+  register: patch_scan_raw
+  changed_when: false
+  when: ansible_os_family == 'Debian'
+
+- name: Scan pending upgrades (Fedora, no changes)
+  ansible.builtin.script: scan_dnf.py
+  args:
+    executable: python3
+  register: patch_scan_raw_rpm
+  changed_when: false
+  when: ansible_os_family == 'RedHat'
+
+- name: Raw scan to the runner
+  ansible.builtin.copy:
+    content: "{{ (patch_scan_raw.stdout | default(patch_scan_raw_rpm.stdout)) }}"
+    dest: "{{ patch_scan_out }}/{{ inventory_hostname }}.raw.json"
+    mode: "0640"
+  delegate_to: localhost
+
+- name: Classify Sev1-4 (runner)
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -I
+      - "{{ role_path }}/files/classify.py"
+      - "{{ patch_scan_out }}/{{ inventory_hostname }}.raw.json"
+      - "{{ patch_scan_out }}/{{ inventory_hostname }}.scan.json"
+      - "{{ inventory_hostname }}"
+      - "{{ patch_scan_reboot_hint_regex }}"
+      - "{{ patch_scan_ubuntu_cve_url }}"
+  delegate_to: localhost
+  changed_when: false
+
+- name: Load the classified scan
+  ansible.builtin.set_fact:
+    patch_scan_result: "{{ lookup('file', patch_scan_out ~ '/' ~ inventory_hostname ~ '.scan.json') | from_json }}"

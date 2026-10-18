@@ -1,0 +1,12 @@
+# Highest severity number to apply: 2 = Sev1+Sev2 (auto), 4 = upper bound for the monthly bundle.
+# With patch_bundle_allow defined, Sev3/4 are applied only for packages on the host's allow list (see below).
+patch_max_sev: 2
+# Monthly bundle approval (not defined by default; passed with -e @allow.json by the monthly workflow):
+#   patch_bundle_allow: { <host>: [<package>, ...] }
+# Defined: Sev1/2 always, Sev3/4 only if listed for that host. Undefined: severity <= patch_max_sev (unchanged).
+# Name of the pre-patch snapshot taken by the pipeline before this run: pre-patch_<YYYYmmdd>_<HHMM>. Required.
+patch_snapshot: ""
+patch_apply_snapshot_regex: '^pre-patch_[0-9]{8}_[0-9]{4}$'
+# Never patched by the team (protected.yaml); they run unattended security updates themselves.
+patch_apply_protected_vmids: [100, 300, 303]
+patch_apply_out: "{{ patch_scan_out }}"
