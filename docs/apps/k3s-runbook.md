@@ -15,15 +15,30 @@ On a control node (`ssh_exec` on 310/311/312):
 
 ## Common problems
 - **VIP not answering**: `systemctl status keepalived` and `journalctl -u keepalived` on the control nodes; a node in VRRP FAULT means `/usr/local/bin/k3s-api-check` fails (API not serving). VRRP is IP protocol 112 between the control nodes. Nodes still reach each other by IP; only workers and kubectl use the VIP. Do not enable `anonymous-auth` to "fix" a 401: 401 is the healthy answer.
-- **A control node crash-loops with `server/cred/passwd newer than datastore and could cause a cluster outage`**: k3s was restarted while it was still joining etcd. Fix on that node: `systemctl stop k3s`, `rm /var/lib/rancher/k3s/server/cred/passwd`, `systemctl start k3s` (recreated from the datastore). The role does this itself for a joining control node that is not running; it never restarts k3s straight after its first start. Never delete the file on a healthy node and never on k3sc01 (the datastore source).
+- **A control node crash-loops with `server/cred/passwd newer than datastore and could cause a cluster outage`**: see the next section.
 - **A control node does not join**: `journalctl -u k3s` on it; check it reaches `192.168.70.30:6443` and 2379-2380 between servers, clocks in sync, and `/etc/rancher/k3s/config.yaml` has `server:` and `token:` (the server token). Re-run the apply (idempotent).
 - **Worker stays NotReady / does not join**: reach `192.168.70.200:6443`, check `br_netfilter`/`overlay` (`lsmod`), `sysctl net.ipv4.ip_forward` = 1, swap off (`swapon --show` empty), `journalctl -u k3s-agent`. A worker's `token:` must be the agent token (`/etc/rancher/k3s/agent-token` on k3sc01); the server token does not belong on workers.
 - **Pods stuck Pending on all workers**: taint is intended on servers only; check `kubectl describe node`.
 - **Lost quorum (2 of 3 control nodes down)**: API unavailable. Bring the nodes back first. Restoring from a snapshot is a last resort: `k3s server --cluster-reset --cluster-reset-restore-path=<snapshot>` on one node, then wipe `/var/lib/rancher/k3s/server/db` on the others and rejoin (Faris decides).
 - **The last play 'k3s token escrow' failed at 'Write once to OpenBao'**: the cluster itself is complete (the play runs after it). 403 = the ci-apply policy lacks `+/secret/data/apps/k3s/*` create, or the shr namespace is missing (platform: Faris, `apply.sh`). No marker was written, so the next apply retries. **400 (check-and-set)** = the secret already exists in OpenBao but the marker is missing (the run died between write and marker): Faris deletes `shr/secret/apps/k3s/hm1-shr-k3sc01` in OpenBao, then re-run the apply.
 
+## Crash loop: `cred/passwd newer than datastore`
+Cause: k3s rewrites `/var/lib/rancher/k3s/server/cred/passwd` itself (join, restart, credential change). If its mtime is newer than the datastore's bootstrap record, k3s refuses the next START (checked at start only). A server that can reach the init server (k3sc01, `server:` in config of c02/c03) compares against it and passes; the init server (nobody to reconcile with) and any server that cannot reach k3sc01 fail. Seen 2026-10-17 after a host reboot: all three servers, including k3sc01, fataled; k3sc02/03 only failed while k3sc01:6443 was down.
+
+Prevention: the unit of ALL control nodes (not workers) runs `ExecStartPre=-/bin/rm -f /var/lib/rancher/k3s/server/cred/passwd`, so every start (boot, crash restart, role restart) drops the file and k3s recreates it from the datastore (the documented k3s remedy).
+- Why it is safe: the file only caches credentials, the datastore (etcd bootstrap data) is the source of truth.
+- Downside: a real divergence (restore, a credential change not yet in the datastore) is masked; the datastore wins without a warning. Take etcd snapshots before credential changes or restores.
+
+Manual recovery if it still happens (SRE), one control node at a time, never two together (etcd quorum):
+1. Snapshot the VM first (`pre-change` snapshot) and, if the API still answers on another node, `k3s etcd-snapshot save` there.
+2. Start with k3sc01: `systemctl stop k3s`, `mv /var/lib/rancher/k3s/server/cred/passwd /root/passwd.bak`, `systemctl start k3s`; k3s logs 'Updating bootstrap data on disk from datastore' and regenerates it. Wait for `/readyz` ok.
+3. k3sc02/03 usually recover by themselves once k3sc01:6443 answers (restart loop ends on its own). If one does not, repeat step 2 on it, after the previous node is `Ready`.
+4. Do not delete the file on a healthy, running node by hand; the unit does it at the next start anyway.
+
+VM start order (k3sc01 first, delay before the others) is handled in Terraform (infrastructure-engineer), not here.
+
 ## Restart rule (role)
-The role restarts k3s only if it was already running before the run started and its binary, config or unit changed. A first start is never followed by a restart. Combined with `serial: 1` this gives a rolling restart, one node at a time.
+No handler restarts k3s (only keepalived). The role restarts k3s only if it was already running before the run and its binary, config or unit changed, so a no-op run never restarts it. A first start is never followed by a restart. The control plane play is `serial: 1` (sorted, `any_errors_fatal`) and each node must pass `/readyz` and node Ready before the next one starts, so a restart never takes quorum down. A unit change (like the passwd line) therefore restarts k3sc01, c02, c03 one after the other.
 
 ## Replacing a node
 - **Worker**: `kubectl drain <w> --ignore-daemonsets --delete-emptydir-data`, `kubectl delete node <w>`, then rebuild the VM; the apply joins it with the agent token from `k3sc01`.
@@ -31,7 +46,7 @@ The role restarts k3s only if it was already running before the run started and 
 - **k3sc01 (first sorted host)**: do not rebuild blindly. A fresh k3sc01 would run `cluster-init` and start a new cluster, and generate a new agent token. Instead make it join: first temporarily set `svc_k3s_init_host` to another healthy control node by PR (Faris approves), copy `/etc/rancher/k3s/agent-token` to that node, rebuild, apply, revert.
 
 ## Patching and reboots
-All nodes are `ring1`. Reboots wait for Faris. One control node at a time: `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`, reboot, wait `Ready`, `kubectl uncordon`, check `get nodes` and `/readyz`, then the next. Never two control nodes together. Workers one at a time, drained first.
+All nodes are `ring1`. Reboots wait for Faris. One control node at a time: `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`, reboot, wait `Ready`, `kubectl uncordon`, check `get nodes` and `/readyz`, then the next. Never two control nodes together. Workers one at a time, drained first. A host reboot restarts all guests at once: see the crash loop section.
 
 ## Upgrade / rollback
 Bump `svc_k3s_version` and `svc_k3s_sha256` in `ansible/roles/svc_k3s/defaults/main.yml` by PR (checksum from the release's `sha256sum-amd64.txt`, line `k3s`; step one minor version at a time). The apply upgrades control nodes then workers, one at a time, stopping on the first node that is not Ready. Take an etcd snapshot first (`k3s etcd-snapshot save`). Rollback of a minor upgrade needs a snapshot restore.
