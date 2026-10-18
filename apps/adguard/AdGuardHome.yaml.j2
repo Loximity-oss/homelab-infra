@@ -15,7 +15,6 @@ dns:
   bootstrap_dns: {{ app_adguard_bootstrap | to_json }}
   cache_enabled: true
   cache_size: {{ app_adguard_cache_size }}
-  blocking_mode: default
   allowed_clients: {{ app_adguard_allowed_clients | to_json }}
   disallowed_clients: {{ app_adguard_disallowed_clients | to_json }}
 tls:
@@ -31,6 +30,7 @@ statistics:
   interval: {{ app_adguard_stats_interval }}
 filtering:
   filtering_enabled: true
+  blocking_mode: default  # v0.107.79 keeps it under filtering:, not dns: (under dns: it was ignored and drifted every run)
   rewrites: {{ (app_adguard_rewrites + app_adguard_rewrites_extra) | to_json }}
 filters: {{ app_adguard_filters | to_json }}
 user_rules: {{ (app_adguard_user_rules + app_adguard_user_rules_extra) | to_json }}
