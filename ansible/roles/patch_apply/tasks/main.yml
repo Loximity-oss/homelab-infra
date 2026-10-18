@@ -13,9 +13,37 @@
       - patch_max_sev | int in [1, 2, 3, 4]
     fail_msg: "patch_snapshot must be pre-patch_<date>_<time> (taken before the run) and patch_max_sev 1-4"
 
-- name: Packages to apply (severity <= patch_max_sev)
+- name: patch_bundle_allow has the expected shape (dict host -> list of package names)
+  ansible.builtin.assert:
+    that:
+      - patch_bundle_allow is mapping
+      - patch_bundle_allow.values() | map('type_debug') | unique | difference(['list']) | length == 0
+    fail_msg: "patch_bundle_allow must be a dict host -> list of package names"
+  when: patch_bundle_allow is defined
+
+# Rule: Sev1/2 are always applied. Sev3/4 are applied ONLY when patch_bundle_allow (the approved monthly bundle)
+# is defined and lists the package for this host. A Sev3/4 package that is not on the list (e.g. released after the
+# approval) is deferred. Without patch_bundle_allow (6-hourly run) behaviour is unchanged: severity <= patch_max_sev.
+- name: Packages always applied (Sev1/2, or severity <= patch_max_sev without a bundle)
   ansible.builtin.set_fact:
-    patch_apply_list: "{{ patch_scan_result.packages | selectattr('severity', 'le', patch_max_sev | int) | map(attribute='name') | list }}"
+    patch_apply_base: >-
+      {{ patch_scan_result.packages
+         | selectattr('severity', 'le', ([patch_max_sev | int, 2] | min) if patch_bundle_allow is defined else (patch_max_sev | int))
+         | map(attribute='name') | list }}
+
+- name: Packages approved in the bundle for this host (Sev3/4 on the allow list)
+  ansible.builtin.set_fact:
+    patch_apply_approved: >-
+      {{ patch_scan_result.packages
+         | selectattr('severity', 'gt', 2)
+         | selectattr('severity', 'le', patch_max_sev | int)
+         | selectattr('name', 'in', patch_bundle_allow.get(inventory_hostname, []))
+         | map(attribute='name') | list }}
+  when: patch_bundle_allow is defined
+
+- name: Packages to apply
+  ansible.builtin.set_fact:
+    patch_apply_list: "{{ (patch_apply_base + (patch_apply_approved | default([]))) | unique }}"
 
 - name: Failed units before
   ansible.builtin.command: systemctl list-units --failed --plain --no-legend --no-pager
@@ -82,7 +110,8 @@
       host: "{{ inventory_hostname }}"
       snapshot: "{{ patch_snapshot }}"
       max_sev: "{{ patch_max_sev | int }}"
+      bundle_mode: "{{ patch_bundle_allow is defined }}"
       applied: "{{ patch_apply_list }}"
       reboot_pending: "{{ (patch_apply_reboot_deb.stat.exists | default(false)) or ((patch_apply_reboot_rpm.rc | default(0)) == 1) }}"
       reboot_hint: "{{ patch_scan_result.reboot_hint }}"
-      deferred: "{{ patch_scan_result.packages | rejectattr('severity', 'le', patch_max_sev | int) | map(attribute='name') | list }}"
+      deferred: "{{ patch_scan_result.packages | map(attribute='name') | list | difference(patch_apply_list) }}"
