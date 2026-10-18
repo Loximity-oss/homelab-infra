@@ -178,6 +178,8 @@
 # Any drift (UI edit, hand edit, template change, missing file) -> the whole live file is replaced by the validated
 # render and the service restarted. Settings the template does not mention therefore reset to AdGuard defaults on
 # drift. No drift -> nothing changes, no restart. Query log/stats data in data/ is never touched.
+# The script is only installed by an apply that runs this role (push to main touching ansible/). The nightly verify
+# does not deploy it, so a script fix needs a merge like this one to reach the guests (#101 -> issues #97-#100).
 - name: Drift check script
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../apps/adguard/adguard-drift.py"
