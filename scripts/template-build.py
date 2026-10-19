@@ -557,9 +557,9 @@ def build_one(pve, rel, infra, std, lc, report):
     lo = lc["scratch"][0]
     cand, vfy = lo + 1, lo + 2
     guard_vmids(std, lc, target, lo, cand, vfy)
-    # Replacing an existing template destroys it first, and PVE drops its per-VMID ACLs on destroy; until root
-    # re-applies them automatically (pve-feature-broker follow-up, Faris decision) a replace could lose the template.
-    # New templates only; set TPL_ALLOW_REPLACE=1 in the workflow once that lands.
+    # Replacing an existing template destroys it first, and PVE drops its per-VMID ACLs on destroy; pve-feature-broker
+    # (root, every minute, `template_acls`) re-applies them and wait_alloc() waits for that. The workflow sets
+    # TPL_ALLOW_REPLACE=1 (infra #115); without it (e.g. a manual run) only new templates are built.
     if target in pve.vmids() and os.environ.get("TPL_ALLOW_REPLACE") != "1":
         raise Fail(f"template {target} exists and replace is disabled until the ACL re-apply lands; nothing changed")
     net = stg_net(std)

@@ -9,6 +9,10 @@ This broker does exactly one thing on the pipeline's behalf: an LXC tagged `feat
   - ARP announce (issue #28): a pipeline guest (tag mgd-tf) that started in the last 15 minutes pings its own gateway
     once per boot (LXC: pct exec, VM: guest agent), so the core switch replaces a stale ARP entry left by an earlier
     guest with the same IP (replace / re-create). Nothing else is run inside guests.
+  - template ACLs (2026-10-19, infra #115): PVE drops a VMID's ACLs on every destroy, so a template replace (or a scratch
+    build VM) loses them. Re-adds the entries listed in `template_acls` (homelab-standards proxmox-acls.yaml) when
+    missing. Only /vms/9000-9099 and /vms/9990-9999, only the DevOpsTemplate* roles and PVEAuditor, only svc-*@pve
+    service accounts; never removes or changes any other ACL.
   - never touches anything else; every action is logged to the journal (tag pve-feature-broker)
 Config: /etc/pve-feature-broker.json. Source: homelab-infra host/pve-feature-broker/ (Class C); installed by root.
 """
@@ -72,6 +76,44 @@ for r in res:
         announce(r)
     except Exception as e:  # never break the keyctl part
         log(f"{r.get('vmid')}: announce skipped: {e}")
+
+
+# Hard limits for template_acls, whatever the config says.
+TPL_RANGES = ((9000, 9099), (9990, 9999))
+TPL_ROLES = {"DevOpsTemplateBuild", "DevOpsTemplateUse", "PVEAuditor"}
+
+
+def template_acls():
+    """Re-add missing template ACL entries (user + its token, propagate=1, as pveum acl modify sets them)."""
+    have = {(a["path"], a["ugid"], a["roleid"]) for a in
+            json.loads(sh("pvesh", "get", "/access/acl", "--output-format", "json"))}
+    for rule in CONF.get("template_acls", []):
+        role, users, tokens = rule["role"], rule.get("users", []), rule.get("tokens", [])
+        if role not in TPL_ROLES or not all(re.fullmatch(r"svc-[a-z0-9-]+@pve", u) for u in users) or \
+                not all(re.fullmatch(r"svc-[a-z0-9-]+@pve![a-z0-9-]+", t) for t in tokens):
+            log(f"template_acls: refused rule {rule} (role or account outside the allowlist)"); continue
+        vmids = list(rule.get("vmids", [])) + [v for lo, hi in rule.get("ranges", []) for v in range(lo, hi + 1)]
+        for vmid in vmids:
+            if vmid in CONF["protected"] or not any(lo <= vmid <= hi for lo, hi in TPL_RANGES):
+                log(f"template_acls: refused /vms/{vmid} (outside template ranges)"); continue
+            path = f"/vms/{vmid}"
+            miss_u = [u for u in users if (path, u, role) not in have]
+            miss_t = [t for t in tokens if (path, t, role) not in have]
+            if not miss_u and not miss_t:
+                continue
+            cmd = ["pveum", "acl", "modify", path, "--roles", role]
+            if miss_u:
+                cmd += ["--users", ",".join(miss_u)]
+            if miss_t:
+                cmd += ["--tokens", ",".join(miss_t)]
+            sh(*cmd)
+            log(f"{path}: re-applied {role} for {', '.join(miss_u + miss_t)}")
+
+
+try:
+    template_acls()
+except Exception as e:  # never break the keyctl part
+    log(f"template_acls skipped: {e}")
 
 for r in res:
     tags = (r.get("tags") or "").split(";")
