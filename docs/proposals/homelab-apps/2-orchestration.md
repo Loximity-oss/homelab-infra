@@ -74,8 +74,8 @@ Order: (1) deployment removed or host taken out (apps, C) **first**, while the h
 | Helper | `lock_hosts <csv>` in infra `ci-lib.sh` (apps uses it from the infra clone): sorted, one fd per host, `flock -w 3600`, released on exit |
 | Files | `/var/lib/devops/locks/host-<hostname>.lock`. Directory `root:devops-locks` mode **3770** (setgid + sticky, not world-writable): no runner can unlink or rename another's lock file (infra F, reviewer 21). Step 4 pre-creates files for all current hosts (`0664`, group `devops-locks`); new ones are created with `umask 002`. `lock_hosts` opens with `exec {fd}>>file` (append) and never deletes or recreates a file |
 | infra apply | locks taken right after `plan_guests.py` + `HOSTS` are computed, **before the pre-apply snapshot**; set = create ∪ replace ∪ update ∪ delete ∪ `HOSTS`; whole fleet when `ansible_all` or `tests/` changes |
-| patching | `scan` takes none (read-only); `patch_run()` locks its host set before `snapshot.py take` |
-| verify | `ci-verify.sh` locks its host set (`--all` = fleet) for the whole run |
+| patching | `scan` takes none (read-only); `patch_run()` locks its whole host set in **one** `lock_hosts` call before `snapshot.py take` (infra 3.3-2) |
+| verify | `ci-verify.sh` locks its whole host set (`--all` = fleet) in one call, for the whole run; `finish()`/exit releases all locks |
 | apps deploy / verify | lock the deployment hosts for the whole run |
 | reboot | new infra `reboot` workflow (3.4) locks the host for the whole reboot; agents never reboot patched hosts directly |
 | Timeouts | job `timeout-minutes` in `apply.yml`, `patch.yml`, `verify.yml`, `reboot.yml`, apps `deploy.yml` = 240 (> 60 min lock wait + longest run). A lock-wait timeout upserts issue `pipeline: lock wait timeout <host>` (SRE R3-5) |

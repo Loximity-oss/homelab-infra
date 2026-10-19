@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **WIP — revision 3.3, final confirmation** (2026-10-19). Nothing is built until all six engineers agree and Faris approves. |
+| Status | **WIP — revision 3.4, final confirmation** (2026-10-19). Nothing is built until all six engineers agree and Faris approves. |
 | Asked by | Faris, 2026-10-19 |
 | Review | infra issue #125: one `Verdict (<engineer>): agree \| agree with changes \| object` comment per engineer |
 | Files | each under 15 000 characters, so `read_file` (max 20 000) returns it whole |
@@ -46,6 +46,14 @@
 | Agents resolve their issues | Faris approves Class C, root and `homelab/openclaw` work only |
 | Narrow tools / root jobs, never wider tokens | e.g. `svc-apps@pve` can only snapshot; no DevOpsAdmin in apps |
 | Kubernetes workloads | parked; later `clusters/<zone>` GitOps layout; more host RAM before an int cluster |
+
+## What changed in revision 3.4 (rev 3.3 round: configuration, sre, network, pm agree; infrastructure agree with changes, no blockers)
+
+| Point | Handled in |
+|---|---|
+| infra 3.3-1 `ci-apps.pub` order: step 7a re-apply before the first check-mode run (and after step 8); failed apps clone keeps keys + warning + issue | 5.1, 6 step 7a |
+| infra 3.3-2 patch/verify take the whole set in one `lock_hosts` call; locks released in `finish()`; 4b test with a held lock | 2.3, 6 step 4b |
+| pm 3.3 reboot rule in the PM prompt switches to `reboot_guest` before cutover; `oc-pm` read on apps is enough to open issues | 5.3 |
 
 ## What changed in revision 3.3 (rev 3.2 round: infrastructure, sre, network agree; reviewer, configuration agree with changes)
 
