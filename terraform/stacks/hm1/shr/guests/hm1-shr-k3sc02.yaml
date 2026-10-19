@@ -5,7 +5,7 @@ role: k3sc
 os: ubuntu2604
 ip: 192.168.70.31
 cores: 2
-memory_mb: 2048
+memory_mb: 4096
 disk_gb: 20
 datastore: lvmt-nvme01
 owner: infra
