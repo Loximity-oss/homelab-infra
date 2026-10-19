@@ -26,6 +26,7 @@ jobs:
           EVENT: ${{ gitea.event_name }}
           SPEC: ${{ inputs.spec }}
           MODE: ${{ gitea.event_name == 'schedule' && 'refresh-check' || 'build' }}
+          TPL_ALLOW_REPLACE: "1" # pve-feature-broker re-applies template ACLs after a destroy (infra #115)
         run: |
           rm -rf base
           git clone -q "${SERVER%%://*}://ci:${GIT_TOKEN}@${SERVER#*://}/${REPO}.git" base
