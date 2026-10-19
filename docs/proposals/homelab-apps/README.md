@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **WIP — revision 3.2, final confirmation** (2026-10-19). Nothing is built until all six engineers agree and Faris approves. |
+| Status | **WIP — revision 3.3, final confirmation** (2026-10-19). Nothing is built until all six engineers agree and Faris approves. |
 | Asked by | Faris, 2026-10-19 |
 | Review | infra issue #125: one `Verdict (<engineer>): agree \| agree with changes \| object` comment per engineer |
 | Files | each under 15 000 characters, so `read_file` (max 20 000) returns it whole |
@@ -46,6 +46,25 @@
 | Agents resolve their issues | Faris approves Class C, root and `homelab/openclaw` work only |
 | Narrow tools / root jobs, never wider tokens | e.g. `svc-apps@pve` can only snapshot; no DevOpsAdmin in apps |
 | Kubernetes workloads | parked; later `clusters/<zone>` GitOps layout; more host RAM before an int cluster |
+
+## What changed in revision 3.3 (rev 3.2 round: infrastructure, sre, network agree; reviewer, configuration agree with changes)
+
+| Point | Handled in |
+|---|---|
+| reviewer 3.2-1 (B) lint every `.j2` under `catalog/<app>/**` (incl. `files/**`) and any template src; unit test `files/sub/x.j2` | 5.1, 6 step 5 |
+| reviewer 3.2-2 (B) reject `__` and `mro` in Jinja; one test per spelling | 5.1, 6 step 5 |
+| cfg 3.2-B1 (B) `delegate_to` only to another host of the same deployment, guard re-checks; k3s keeps init-host token reads; `localhost` VIP check → `health`/`probes` | 5.1, 6 step 8 |
+| cfg 3.2-B2 (B) `check_mode: false` only with `changed_when: false` on read-only modules | 5.1, 6 step 7 |
+| cfg 3.2 clarification: `bao_create_secret` `generate`/`hash: bcrypt`, returns only the hash, `no_log`, no-op in check mode, existing secret = already created | 5.1 |
+| reviewer 3.2-a guard-captured zone/host for `bao_create_secret`; no `set_fact`/`register` on banned keys | 5.1 |
+| reviewer 3.2-b `include_vars`/`include_tasks`/`import_tasks` paths resolved statically | 5.1 |
+| reviewer 3.2-c per-app policy: `create` only, explicit guest-zone mounts, with and without host | 5.1 |
+| reviewer 3.2-d `VM.Snapshot` can delete any snapshot in those pools: accepted risk, recorded | 5.1 |
+| reviewer 3.2-e restrict approvals to whitelist on apps `main` | 5.1 |
+| reviewer 3.2-f lint failure = red check (cannot merge), not "Class C" | 5.1 |
+| reviewer 3.2-g `ci-apps.pub` only on deployment hosts | 5.1 |
+| reviewer 3.2-h Q12 tracked as its own infra issue | 6.3 |
+| cfg 3.2 notes: `community.general` in `requirements.yml`; no leftover OpenBao refs in `app_adguard` defaults; version-check validates `version.url` and `known` keys; step 7 exception list | 6 steps 5, 7; 3.3 |
 
 ## What changed in revision 3.2 (confirmation round: pm, network agree; 4 × agree with changes)
 

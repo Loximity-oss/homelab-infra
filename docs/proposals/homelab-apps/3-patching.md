@@ -26,7 +26,7 @@ basics only, plus a warning in the run.
 | Step | Detail |
 |---|---|
 | Pin | `version.pin` + `version.known[pin]` sha256; the role verifies the download on the guest |
-| Check | Mon 04:30: upstream latest vs pin → issue `app update: <app> <version>` with the **new sha256** (AdGuard: release asset; k3s: `sha256sum-amd64.txt`, line `k3s`) and the release-notes link; security releases flagged `Sev2`. Also lists deployments whose `pin_until` has passed |
+| Check | Mon 04:30 (also validates that `version.url` contains `{version}` and each `known` key matches the URL asset name, cfg 3.2): upstream latest vs pin → issue `app update: <app> <version>` with the **new sha256** (AdGuard: release asset; k3s: `sha256sum-amd64.txt`, line `k3s`) and the release-notes link; security releases flagged `Sev2`. Also lists deployments whose `pin_until` has passed |
 | Bump PR | oc-cfg changes `version.pin` and adds the `known` entry. patch/minor = `bump_class` (B default); major = C; k3s = C always |
 | Roll out | waves (2.5): wave 1 (stg) → L4 green → `wave_delay` → wave 2; host by host with `health` between hosts; snapshot `pre-deploy_*` per host |
 | k3s | `rollout.groups` hooks: drain → upgrade → uncordon → quorum check, control nodes first, one at a time |
