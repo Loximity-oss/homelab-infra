@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| Status | **WIP — revision 2, team review** (2026-10-19). Nothing is built until all six engineers agree and Faris approves. |
+| Status | **WIP — revision 3, confirmation round** (2026-10-19). Nothing is built until all six engineers agree and Faris approves. |
 | Asked by | Faris, 2026-10-19 |
 | Review | infra issue #125: one `Verdict (<engineer>): agree \| agree with changes \| object` comment per engineer |
-| Files | each under 15 000 characters so `read_file` returns it whole (rev 1 was cut at 20 000) |
+| Files | each under 15 000 characters, so `read_file` (max 20 000) returns it whole |
 
 | File | Content |
 |---|---|
@@ -47,21 +47,22 @@
 | Narrow tools / root jobs, never wider tokens | e.g. `svc-apps@pve` can only snapshot; no DevOpsAdmin in apps |
 | Kubernetes workloads | parked; later `clusters/<zone>` GitOps layout; more host RAM before an int cluster |
 
-## What changed in revision 2
+## What changed in revision 3 (round-2 verdicts: 6 × agree with changes)
 
 | From | Change | Where |
 |---|---|---|
-| Faris | catalogue (`catalog/`) + deployments (`deployments/<zone>/`); statuses example/beta/stable/deprecated; `list_catalog`, `plan_from_catalog`; "build from catalogue" flow | 1, 2, 5 |
-| Faris | rollout waves (stg first), per-deployment version pin | 1, 2, 3 |
-| Faris | verification: continuous probes, client's-eye checks, k3s L4 | 4 |
-| oc-infra #1 | locks specified: each pipeline takes all its host locks sorted, up front, held for the run; added to `ci-apply.sh`, `ci-patch.sh`, `ci-verify.sh`, apps deploy/verify | 2.3, 6 step 7 |
-| oc-infra #2 | dispatch only for hosts that passed L1–L3, inserted after the verify block of `ci-apply.sh` before `finish`; `workflow_dispatch` is already used by `verify_guest` and `build_template`; apps reports to infra PRs with the `ci` bot token (comment rights on both repos) | 2.1, 5.1 |
-| oc-infra #3 | targets are explicit deployment files; adding/removing hosts or a deployment = **Class C** | 5.2 |
-| oc-infra #4 | apps classifier defaults to **C** for unmatched paths; field-level judgement by base/head leaf comparison (like `template_change()`); globs anchored per segment | 5.2 |
-| oc-infra #5 | L4 leaves infra at cutover: `verify.py` (`app_tests`), `ansible/roles/verify` L4 tasks, `tests-check.py`, `tests/apps/` | 6 step 8 |
-| oc-infra | proposal split into files under the `read_file` limit | this file |
+| reviewer | **separate runner `host-apps` / user `runner-apps`**, own SSH key and AppRole (Q1 decided); per-app OpenBao create lines; distinct `ci-apps` bot; pool check in nightly scan | 5.1, 5.4 |
+| reviewer, oc-infra | PR job offline only (`pull_request_target`, `host-plan`); lint gate for dangerous constructs; deploy guard in `pre_tasks`; `vars` key ban; dispatch only from `main`, inputs untrusted | 2.1, 2.2 B, 5.1 |
+| reviewer, oc-cfg, oc-infra | classifier: segment matcher with `**`; every unlisted leaf C; full field list; stricter-of for `bump_class`; renames, symlinks, plugin dirs, root config = C; unit tests; docs-only merge never deploys; `health` and rollout gates = C | 5.2 |
+| oc-infra | locks: `lock_hosts` helper, taken before the pre-apply snapshot, set = all touched hosts, scan none, `patch_run`, verify fleet, job timeouts 240 min; dispatch only hosts with no failed test row, nothing if Ansible failed; dispatch failure = warning + issue; `APPS_DISPATCH` in `apply.yml`, enabled in a separate PR; revert order reversed; locks before check-mode runs | 2.1, 2.3, 6 |
+| PM | tracking issue per multi-PR change with PR checklist; SRE verify step in every flow; remove flow (deployment first, then destroy); `plan_from_catalog` briefs + `create_issue` + `mode=remove`; `repo="apps"` everywhere; `app_verify_status`; wave-failure semantics + `redeploy_app(from_wave)` | 2.2, 2.4, 2.5, 5.3 |
+| SRE | `health` contract (shell, exit 0, timeout, no secrets) with real commands; probe record `probe.hm1.lox-internal.dev` (no WAN dependency); snapshot retention table; reboot silence, pair/drain failure paths; inhibit rules; drill 5 min; k3s L4 per role + VIP holder deployment-level; `wave_delay`; cutover snapshot + etcd snapshot + revert trigger 30 min; runbooks | 1.5, 3, 4, 6 |
+| oc-cfg | `version.known` checksums, k3s build metadata = patch; secrets schema with real keys; missing host = warning; `deploy.yml` builds `role_<code>` groups from the deployment; `role_path`-relative files; k3s upgrade hooks + quorum check; **stg AdGuard canary** (`hm1-stg-dns01`); `canary_waiver`; `playbooks/**` to oc-cfg; peer check renamed; read-only reads infra → apps stated | 1, 2, 3, 6 |
+| oc-net | flow vocabulary (`self-zone`, zones, hosts, `internet`); flows resolved per router; narrow UDM policy (CT 100 → 4 DNS IPs: 53/udp, 80/tcp, icmp, 22/tcp, Faris creates); mgt → shr is `flows.yaml` only; gate step 4b before apply in gateway zones; planned IP = spec IP; `flows.yaml` schema first | 1.8, 2.4, 4.3, 5.4 |
+| Claude | **reboots become an infra `reboot` workflow**: Faris's `reboot` comment is checked in code, host lock taken, catalogue policy, `pre-reboot_*`; `reboot_guest` PM tool. **Step 0 vzdump** of all non-protected guests except VM 210 (never touched) | 3.4, 6 |
+| found in review | `comment_issue` truncates at 6 000 chars (reviewer's verdict was cut at point 12) → fix in step 2 | 5.3 |
 
-## Review checklist (answer on #125: agree / agree with changes / object, with file and section)
+## Confirmation round (answer on #125: agree / agree with changes / object, with file and section)
 
 | Engineer | Confirm |
 |---|---|

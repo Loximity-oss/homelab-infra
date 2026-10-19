@@ -1,108 +1,128 @@
 # 2. Orchestration
 
-## 2.1 Who triggers whom (one direction only)
+## 2.1 Who triggers whom
 
 ```
-homelab-infra  PR merged → apply: Terraform → known_hosts → Ansible base (site.yml) → L1–L3
-                                                        │ hosts that passed L1–L3 AND are in a deployment
-                                                        ▼ workflow_dispatch(hosts, reason, infra_pr)
-homelab-apps   deploy: lock → snapshot pre-deploy_<ts> → role per deployment (rollout rules) → L4 → report
-                                                        └→ comment on the infra PR (ci bot) + own run log
-
-homelab-apps   PR merged → deploy(changed entries/deployments) in waves: wave 1 (stg) → L4 green → wave 2 …
+homelab-infra  PR merged → apply: locks → snapshot → Terraform → known_hosts → Ansible base → L1–L3 (→ stg rollback, re-test)
+                 → hosts with no failed row in verify.json AND in a deployment → workflow_dispatch apps deploy(hosts) → release locks
+homelab-apps   deploy: locks (waits for infra to release) → snapshot pre-deploy_<ts> → role per deployment → L4 → report
+                 → comment on the infra PR + own run log
+homelab-apps   PR merged → deploy(changed entries/deployments) in waves
 ```
 
-- **Insertion point in infra:** `scripts/ci-apply.sh`, after the "Tests (decision 32)" block and before `finish`,
-  only for hosts whose L1–L3 rows passed and that appear in a deployment (read from a `homelab-apps` main clone).
-  Behind `APPS_DISPATCH=0|1` (off until cutover).
-- **Dispatch API:** `POST /repos/homelab/homelab-apps/actions/workflows/deploy.yml/dispatches`, the same call
-  `verify_guest` and `build_template` already use on homelab-infra.
-- **Apps never triggers infra.** Inventory: the apps pipeline clones `homelab-infra` main read-only and uses
-  `scripts/inventory.py` + `specs.py`; the infra sha is recorded in every report.
+- **Triggers are one-way** (infra → apps). Reads go both ways, read-only (1.3).
+- **Dispatch point:** `ci-apply.sh`, after the tests block (incl. stg rollback re-test), before `finish`, locks still
+  held. Hosts = `verify.json` rows with no `fail`, minus rolled-back hosts. If the Ansible run failed (`ok ≠ 0`),
+  nothing is dispatched. Membership: `ci-apply.sh` clones apps main (read) and keeps hosts that appear in a deployment.
+- **Switch:** `APPS_DISPATCH` env in `.gitea/workflows/apply.yml` (`0` until cutover step 8d).
+- **API:** `POST /repos/homelab/homelab-apps/actions/workflows/deploy.yml/dispatches` (ref `main`) with a
+  dispatch-only token of a new Gitea bot `ci-apps` (write on homelab-apps only; read + comment on infra; never in
+  any merge whitelist). Stored at `hm1/platform/ci/apply` key `gitea_apps_dispatch_token` so `ci-apply` can read it.
+- **Untrusted dispatch:** apps `deploy`/`verify` refuse any ref other than `main` and check out main's sha; inputs
+  (`hosts`, `infra_pr`) are intersected with deployments ∩ specs. Write on apps: `ci-apps`, `faris`, the PR authors
+  `oc-cfg`/`oc-infra`, and `oc-pm` (dispatch for `verify_app`/`redeploy_app`). Because `main` is merge-only and the
+  workflows refuse other refs, write access never runs unreviewed code.
+- **Dispatch failure** never fails the infra apply: the apply comments ⚠️ and upserts issue
+  `pipeline: apps dispatch failed` (label `pipeline`) → PM → oc-infra.
+- **Inventory:** apps clones infra main read-only (`inventory.py`, `specs.py`); the infra sha is in every report.
 
 ## 2.2 Flows
 
-### A. New guest for an existing deployment (e.g. a third resolver)
+The PM tracks every multi-PR change on **one issue** with a checklist of its PRs in dependency order; each PR stays
+WIP until its predecessors are merged. Every flow ends with the SRE verifying (`verify_guest` + `verify_app`) before
+the PM reports and closes.
+
+### A. New host for an existing deployment
 | # | Step | Repo | Who | Gate |
 |---|---|---|---|---|
-| 1 | Guest spec, `role: dns` | infra | oc-infra | A (B in shr) |
-| 2 | Add the host to `deployments/<zone>/adguard.yaml` | apps | oc-cfg | **C** (widens targets) |
-| 3 | Apply creates + L1–L3 → dispatch → deploy → L4 → comment | both | pipeline | — |
+| 1 | Flows (gateway-routed zones only, 2.4 steps 4/4b) | standards + UniFi | oc-net, Faris | B / C |
+| 2 | Add host to `deployments/<zone>/<app>.yaml` | apps | oc-cfg | C |
+| 3 | Guest spec (IP = planned IP) | infra | oc-infra | A (B in shr) |
+| 4 | Apply → L1–L3 → dispatch → deploy → L4 | pipeline | — | — |
+| 5 | Verify, report, close | SRE, PM | — | — |
 
-Order rule: **deployment PR may merge first** — a host that does not exist yet is skipped with a warning; the infra
-dispatch deploys it as soon as it is green. (Merging the guest first is also safe: nothing deploys until step 2.)
+Either order of 2 and 3 works: a deployment host missing from specs is a warning and is skipped; merging the
+deployment deploys to hosts that already exist; a new guest is deployed by the infra dispatch once it is green.
 
 ### B. App change (role, files, config, version)
-App PR → pr workflow: lint (yamllint, ansible-lint, catalog check, gitleaks) → render templates for every target host
-(offline) → `ansible-playbook --check --diff` on the live targets (read-only path, no secret creation) → classify →
-gate → merge → deploy in waves → L4 per wave → PR comment. stg deployments roll back automatically on failed L4
-(snapshot), same rule as infra D3.
+PR → `pr` workflow on `host-plan` (no guest SSH key): yamllint, ansible-lint, `catalog.py check`, gitleaks,
+**offline render** of every template for every target host (before/after diff, secrets as placeholders), classify,
+gate. No PR code ever runs against a guest. Merge → `deploy` in waves (2.5) → L4 per wave → PR comment.
 
 ### C. Guest change (OS baseline, size, template)
-Infra only. A **replace** dispatches the apps deploy for that host (flow A step 3). An in-place base change does not
-redeploy apps; nightly L4 catches side effects.
+Infra only. A replace dispatches the deploy for that host (2.1). In-place base changes do not redeploy apps; nightly
+L4 catches side effects.
 
-### D. Destroy or role change
-Destroy is infra Class C; the catalogue check then fails the deployment listing that host, so the same change set must
-remove it from the deployment (apps Class C). The PM sequences both. A role-code change = rebuild (replace).
+### D. Remove an app from a zone / destroy its guests
+Order: (1) deployment removed or host taken out (apps, C) **first**, while the host still exists; (2) guest destroy
+(infra, C). `plan_from_catalog(app, zone, mode="remove")` produces this plan; the PM opens the tracking issue
+`remove: <app> <zone>`. A role-code change = rebuild (replace).
 
 ## 2.3 Locks
 
 | Rule | Detail |
 |---|---|
-| File | `/var/lib/devops/locks/host-<hostname>.lock` on CT 300 (flock) |
-| Who | infra apply (Ansible + tests part), apps deploy, apps verify, infra verify, patching (`ci-patch.sh`) |
-| How | each run computes its host set, takes **all** host locks in sorted order **up front**, holds them for the whole run |
-| Wait | 60 min, then the run fails loudly (`pipeline.failed`), never partially runs |
-| Templates | existing `templates.lock` unchanged (shared by guest applies, exclusive for builds) |
+| Helper | `lock_hosts <csv>` in infra `ci-lib.sh` (apps uses it from the infra clone): sorted, one fd per host, `flock -w 3600`, released on exit |
+| Files | `/var/lib/devops/locks/host-<hostname>.lock`; directory group-writable for every runner user that takes locks |
+| infra apply | locks taken right after `plan_guests.py` + `HOSTS` are computed, **before the pre-apply snapshot**; set = create ∪ replace ∪ update ∪ delete ∪ `HOSTS`; whole fleet when `ansible_all` or `tests/` changes |
+| patching | `scan` takes none (read-only); `patch_run()` locks its host set before `snapshot.py take` |
+| verify | `ci-verify.sh` locks its host set (`--all` = fleet) for the whole run |
+| apps deploy / verify | lock the deployment hosts for the whole run |
+| reboot | new infra `reboot` workflow (3.4) locks the host for the whole reboot; agents never reboot patched hosts directly |
+| Timeouts | job `timeout-minutes` in `apply.yml`, `patch.yml`, `verify.yml`, `reboot.yml`, apps `deploy.yml` = 240 (> 60 min lock wait + longest run) |
+| Templates | existing `templates.lock` unchanged |
 
 ## 2.4 Build from the catalogue ("PM, build Uptime Kuma in int")
 
 | # | Step | Who | Gate |
 |---|---|---|---|
-| 1 | `plan_from_catalog(app, zone, count?)` — deterministic: hostnames (`hm1-<zone>-<role><nn>`), VMIDs (zone block), free IPs (static band), size and OS from the entry, pattern → number of guests, flows, secrets, the classes of each PR, and a **host RAM check** | PM | — |
-| 2 | Refusal cases returned as reasons: entry `beta` outside stg, `deprecated`, zone without guests, RAM short, role code missing in standards | PM | — |
-| 3 | Issue `build: <app> <zone>` with the plan (Faris sees it, can comment) | PM | — |
-| 4 | Flows from `catalog.flows` not yet in `flows.yaml` → standards PR + UniFi | oc-net | B/C |
-| 5 | `deployments/<zone>/<app>.yaml` | oc-cfg | **C** |
-| 6 | Guest spec(s) sized from the entry | oc-infra | A (B in shr) |
-| 7 | Apply → L1–L3 → dispatch → deploy → L4; probes generated (4.3) | pipeline | — |
-| 8 | Report on the issue: endpoints, OpenBao path of the admin secret, test results; close the issue | PM | — |
+| 1 | `plan_from_catalog(app, zone, count=0, create_issue=True)`: hostnames, VMIDs, IPs, spec fields from `size`/`os` (datastore left to oc-infra), pattern → guest count, flows resolved per router (1.8), secrets, PR list with owner/repo/class/order, one brief per step `{goal, context, constraints, done_when}`, and a **RAM check counting live and planned guests** | PM | — |
+| 2 | Refusals as reasons: `beta` outside stg, `deprecated`, zone without guests, RAM short, role code missing | tool | — |
+| 3 | The tool opens issue `build: <app> <zone>` with the plan and PR checklist | tool | — |
+| 4 | Flows: coresw zones → `flows.yaml` entry only (B, non-blocking); gateway zones → `flows.yaml` (B) **+ UDM policy proposal (C, Faris creates the policy)**; none needed → explicit "no new flows" | oc-net | B / C |
+| 4b | Gateway zones only: oc-net reads UniFi, confirms the policy, sets `state: implemented`; steps 6–7 wait for it | oc-net | — |
+| 5 | `deployments/<zone>/<app>.yaml` | oc-cfg | C |
+| 6 | Guest spec(s); IP must equal the planned IP (checked) | oc-infra | A (B in shr) |
+| 7 | Apply → L1–L3 → dispatch → deploy → L4; probes generated | pipeline | — |
+| 8 | SRE verifies (`verify_guest`, `verify_app`) | SRE | — |
+| 9 | PM reports endpoints, OpenBao path of the admin secret, tests; closes the issue | PM | — |
 
-Faris's only required action: approve the Class C deployment PR (and flows if Class C).
+Faris: approves the Class C PRs; in wifi/iot also creates the UDM policy.
 
-**Adding an app to the catalogue** is a separate request: oc-cfg writes the entry (`beta`) and a stg deployment, the
-team reviews, Faris approves (new entry = C). `beta` → `stable` = Class C PR after **7 days green in stg** (L4 + probes).
+**Adding an app to the catalogue:** oc-cfg writes the entry (`beta`) + a stg deployment; team review; Faris approves
+(C). `beta` → `stable` (C) after 7 days green in stg.
 
 ## 2.5 Waves
 
-- Every deployment has a `wave`; stg = 1 (enforced), others ≥ 2.
-- A catalogue change (role, files, version) deploys wave by wave; wave N+1 starts only when every host of wave N passed L4.
-- An entry with no stg deployment starts at wave 2 (as today). Deployments with their own `version` pin are skipped.
+- stg deployments = wave 1 (enforced), others ≥ 2. Wave N+1 starts only when every host of wave N passed L4 **and**
+  `wave_delay` has passed (default 1 h; probes must be green over it).
+- Hosts inside a deployment go one at a time, the next only after the previous passes `health`.
+- **Wave failure:** the run stops, raises `pipeline.failed` and an `app-verify: <app>/<host>` issue; remaining waves
+  stay pending (shown by `app_status`). Changed hosts: stg rolls back automatically; elsewhere the SRE restores from
+  `pre-deploy_*` and the PM opens a revert PR. `redeploy_app(app, from_wave=N)` resumes.
+- A `stable` entry without a stg deployment needs a written `canary_waiver` (1.6).
 
 ## 2.6 Daily timeline (MYT)
 
 | Time | Job | Repo |
 |---|---|---|
-| continuous | probes (blackbox, every 60 s) → Alertmanager → OpenClaw incident | openclaw |
-| 02:30 | drift: Terraform plan of every stack | infra |
-| 03:00 | verify L1–L3, snapshot prune | infra |
-| **03:15** | **verify L4 + app config drift, every deployment** | apps |
+| continuous | probes every 60 s → Alertmanager → OpenClaw incident | openclaw |
+| 02:30 | Terraform drift | infra |
+| 03:00 | verify L1–L3, snapshot prune (`pre-apply_`, `pre-patch_`, `pre-deploy_`) | infra |
+| 03:15 | verify L4 + app drift | apps |
 | 03:30 | OpenClaw nightly scan | openclaw |
 | 03:40 / 09:40 / 15:40 / 21:40 | OS patch scan (+ Sev1/2 auto) | infra |
-| Mon 04:00 | template refresh check | infra |
-| **Mon 04:30** | **app version check** | apps |
+| Mon 04:00 / 04:30 | template refresh check / app version check | infra / apps |
 | 25th / last Sat 02:00 | OS patch bundle / apply | infra |
 
 ## 2.7 Failure ownership
 
 | Fails | Signal | First responder → owner |
 |---|---|---|
-| infra apply / L1–L3 | `verify: <host>` (infra), PR comment | SRE → oc-infra / oc-cfg |
-| apps deploy / L4 / app drift | `app-verify: <app>/<host>` (apps), PR comment | SRE → oc-cfg |
-| probe alert | Alertmanager → `openclaw-run incident` | SRE |
-| dispatch infra → apps failed | infra PR comment + `pipeline.failed` | PM → oc-infra |
-| version check found a release | `app update: <app> <version>` (apps) | PM → oc-cfg |
+| infra apply / L1–L3 | `verify: <host>`, PR comment | SRE → oc-infra / oc-cfg |
+| apps deploy / L4 / drift / wave stop | `app-verify: <app>/<host>`, PR comment | SRE → oc-cfg |
+| probe alert | Alertmanager → incident run | SRE |
+| apps dispatch | ⚠️ comment + `pipeline: apps dispatch failed` | PM → oc-infra |
+| version release / pin expired | `app update: <app> <version>` | PM → oc-cfg |
 
-All issues opened by the pipeline are resolved and closed by the agents (`close_issue` with evidence); only Class C,
-root or openclaw work goes to Faris.
+All of these are resolved and closed by the agents with evidence; only Class C, root and openclaw work go to Faris.
