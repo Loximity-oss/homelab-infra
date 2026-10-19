@@ -9,9 +9,9 @@ os: arch
 description: Arch Linux cloud image (rolling) + cloud-init, qemu-guest-agent, python
 source:
   kind: image
-  url: https://geo.mirror.pkgbuild.com/images/v20261001.604814/Arch-Linux-x86_64-cloudimg-20261001.604814.qcow2
-  version: "20261001.604814"
-  sha256: 360f0fa49db6813bdc8e35bed230a2dc2ae3567b7b5ab74719c0a706e4e34e87
+  url: https://geo.mirror.pkgbuild.com/images/v20261015.611680/Arch-Linux-x86_64-cloudimg-20261015.611680.qcow2
+  version: "20261015.611680"
+  sha256: 08754e28d91b1680086c6211ef4df13559e766fff7cdb4006489b14b5d281f08
 settings: {}
 seal: ssh
 seal_user: arch   # image default user (sudo); root login is enabled by the provision steps below
