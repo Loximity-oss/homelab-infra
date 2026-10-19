@@ -49,6 +49,7 @@ homelab-apps/
   catalog/<app>/{app.yaml, role/, files/, tests/l4.goss.yaml.j2, docs/design.md, docs/runbook.md}
   catalog/_example/                     status example, compose-based
   deployments/<zone>/<app>.yaml
+  environments.yaml                     what each zone means for apps (1.9)
   playbooks/deploy.yml  ansible.cfg
   scripts/  policy/  .gitea/workflows/
   docs/orchestration.md  docs/patching.md  docs/verification.md  docs/adding-an-app.md  docs/catalog.md (generated)
@@ -138,7 +139,7 @@ host_vars: {}
 | `pair`/`cluster` host count wrong | error (stg: may use `pattern: single`) |
 | pin not in `version.known`; pin without `pin_until` | error |
 | stg not wave 1, non-stg wave 1 | error |
-| `stable` entry without a stg deployment | error unless `canary_waiver: "<reason, Faris, date>"` in the entry |
+| `stable` entry without a stg deployment | **warning** while Q10/Q11 are deferred (Faris 2026-10-19); later error unless `canary_waiver` |
 | secret path outside `<zone>/secret/apps/<app>` or `.../<app>/<host>` | error |
 | entry missing `health`, `reboot`, `version`, `tests`, `probes`; `pair`/`cluster` without `peer_check` | error |
 
@@ -165,3 +166,27 @@ creation.
 `lox-gw-01` (wifi, iot) → `flows.yaml` entry **plus** a UDM policy proposal per host IP. Probe flows
 (`hm1-mgt-aiops01 → self`: probe ports, plus icmp and 22/tcp in gateway-routed zones) are derived from `probes`,
 never hand-listed.
+
+## 1.9 Environments — `environments.yaml` (Faris 2026-10-19)
+
+The apps repo defines what each guest zone **means for apps**. Network facts (VLAN, CIDR, router, DHCP) stay in
+standards `naming/zones.yaml`; this file never repeats them. Class C.
+
+```yaml
+stg:  {tier: staging,    wave: 1, auto_rollback: true,  status: [beta, stable, deprecated],
+       purpose: "test-first: canaries, beta apps, drills; may break"}
+shr:  {tier: production, wave: 2, auto_rollback: false, status: [stable, deprecated],
+       purpose: "shared platform services (k3s, CI, OpenBao); B for updates"}
+int:  {tier: production, wave: 2, auto_rollback: false, status: [stable, deprecated],
+       purpose: "internal services for the home network (a trust zone, not a test tier)"}
+wifi: {tier: production, wave: 2, auto_rollback: false, status: [stable, deprecated],
+       purpose: "client DNS for wifi; gateway-routed (flows need a UDM policy)"}
+iot:  {tier: production, wave: 2, auto_rollback: false, status: [stable, deprecated],
+       purpose: "client DNS for IoT; gateway-routed"}
+dmz:  {tier: production, wave: 3, auto_rollback: false, status: [stable],
+       purpose: "internet-facing services; last wave"}
+```
+
+`catalog.py check`: every `deployments/<zone>/` has an entry here **and** `guests: true` in `zones.yaml`; a
+deployment's `wave` ≥ its environment's `wave`; the entry's status is in the environment's `status` list (replaces the
+hard-coded "beta only in stg" rule); `auto_rollback` drives the stg rollback rule (2.5, 3.5).

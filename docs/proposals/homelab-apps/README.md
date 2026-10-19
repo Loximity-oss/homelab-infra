@@ -10,7 +10,7 @@
 | File | Content |
 |---|---|
 | `README.md` | this index, summary, decisions, what changed in rev 2, review checklist |
-| `1-boundary-catalogue.md` | what goes where; catalogue entries and deployments; `app.yaml` and deployment schema |
+| `1-boundary-catalogue.md` | what goes where; catalogue entries and deployments; `app.yaml` and deployment schema; `environments.yaml` (1.9) |
 | `2-orchestration.md` | triggers, locks, flows (new guest, app change, **build from catalogue**), waves, timeline, failure ownership |
 | `3-patching.md` | OS packages (infra) and app versions (apps), health gates, reboots |
 | `4-verification.md` | L1–L4, k3s L4, continuous probes, client's-eye checks, the fix loop |

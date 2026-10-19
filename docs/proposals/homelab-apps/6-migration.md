@@ -15,8 +15,8 @@ never touched (Faris 2026-10-19).
 | 4 | Root setup: repo + protection + labels + bot `ci-apps`; runner `host-apps` (user `runner-apps`, group `devops-locks`, SSH key, AppRole files); OpenBao `apply.sh`; Proxmox identity + ACLs; test: login works, a `main` workflow runs on `host-apps`, **cross-repo dispatch from infra succeeds** | Gitea, CT 300, OpenBao, PVE | Claude as root for Faris | — | all four tests green |
 | 4b | Infra locks (behaviour-neutral): `lock_hosts` in `ci-lib.sh`; `ci-apply.sh`, `ci-patch.sh` (`patch_run`), `ci-verify.sh`; job timeouts; `ci-apps.pub` key in `ansible/keys` | infra | oc-infra | C | applies/patch scan behave as before |
 | 5 | Apps skeleton: README, docs, `_example`, `catalog.py`, `classify.py` + unit tests, lint gate, workflows (pr offline; deploy/verify **check mode**) | apps | oc-infra (pipeline), oc-cfg (docs, `_example`, playbooks) | C | pr green on a docs PR; classifier tests pass |
-| 6 | stg canary for AdGuard: guest `hm1-stg-dns01` (LXC 1c/1 GB/8 GB) | infra | oc-infra | A | L1–L3 green |
-| 7 | AdGuard entry + deployments wifi, iot, stg (copy; nothing removed in infra). Make read-only tasks `check_mode: false` / `changed_when` where needed; record known check-mode exceptions | apps | oc-cfg | C | check-mode from main on 501/502/601/602 = 0 changed (exceptions listed); render + `adguard-drift.py` diff clean; L4 from apps green |
+| 6 | ~~stg canary for AdGuard~~ **deferred** with Q10/Q11 (Faris 2026-10-19); skeleton ships `environments.yaml` and `deployments/stg/` empty | — | — | — | — |
+| 7 | AdGuard entry + deployments wifi, iot (copy; nothing removed in infra). Make read-only tasks `check_mode: false` / `changed_when` where needed; record known check-mode exceptions | apps | oc-cfg | C | check-mode from main on 501/502/601/602 = 0 changed (exceptions listed); render + `adguard-drift.py` diff clean; L4 from apps green |
 | 8 | k3s entry + `deployments/shr/k3s.yaml` + k3s L4 | apps | oc-cfg | C | check-mode on 310–314 = 0 changed; version/unit-file compare equal; k3s L4 green |
 | 9 | Infra prep: dispatch code (`APPS_DISPATCH=0`), `patch_apply` health from the catalogue (apps clone, fallback, `patch_bundle_allow` guard kept), `reboot.yml` workflow, `reboot_guest` tool | infra, openclaw | oc-infra; Claude drafts tool | C | merged; no behaviour change |
 | 10 | **Cutover evening** (Faris informed; bump PRs frozen in both repos): (a) `pre-cutover` snapshot + `k3s etcd-snapshot save`; (b) apps deploy check → apply, two consecutive real runs, second `changed=0`; (c) infra PR removes app plays/roles/files, `tests/apps/`, L4 from `verify.py` + `ansible/roles/verify`, `tests-check.py` app part, app docs, `changed.py` apps rule, `ci-apply` app policy lines; L4 starts in apps 03:15 in the same change set; (d) **separate PR after (c) is green**: `APPS_DISPATCH=1` | apps, infra, standards | oc-infra, oc-cfg; Claude merges for Faris | C | 03:00 + 03:15 green next night |
@@ -55,5 +55,5 @@ from step 0 as last resort.
 | Q7 | `base_admin_user` | stays in infra |
 | Q8 | Soak `beta` → `stable` | 7 days green in stg |
 | Q9 | Guest metrics | later, if wanted |
-| Q10 | k3s has no stg canary (RAM) | accept a written `canary_waiver` for k3s (every k3s bump is Class C anyway) until more RAM |
-| Q11 | stg AdGuard canary (1 GB RAM) | yes |
+| Q10 | k3s has no stg canary (RAM) | **deferred** by Faris (2026-10-19); missing canary = warning |
+| Q11 | stg AdGuard canary (1 GB RAM) | **deferred** by Faris (2026-10-19) |
