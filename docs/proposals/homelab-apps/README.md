@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **WIP — revision 3.4, final confirmation** (2026-10-19). Nothing is built until all six engineers agree and Faris approves. |
+| Status | **WIP — revision 3.5, final confirmation** (2026-10-19). Nothing is built until all six engineers agree and Faris approves. |
 | Asked by | Faris, 2026-10-19 |
 | Review | infra issue #125: one `Verdict (<engineer>): agree \| agree with changes \| object` comment per engineer |
 | Files | each under 15 000 characters, so `read_file` (max 20 000) returns it whole |
@@ -46,6 +46,15 @@
 | Agents resolve their issues | Faris approves Class C, root and `homelab/openclaw` work only |
 | Narrow tools / root jobs, never wider tokens | e.g. `svc-apps@pve` can only snapshot; no DevOpsAdmin in apps |
 | Kubernetes workloads | parked; later `clusters/<zone>` GitOps layout; more host RAM before an int cluster |
+
+## What changed in revision 3.5 (rev 3.3 round: reviewer agree with changes, 1 blocker)
+
+| Point | Handled in |
+|---|---|
+| reviewer 3.3 (B) Jinja checked on the parsed AST: `attr` banned; `attribute=` only constant, no leading `_`; `Getattr`/`Getitem` rules; constants with `__`/`mro` rejected; one test per bypass | 5.1, 6 step 5 |
+| reviewer 3.3 deployment values may not contain `__`/`mro` | 1.7 |
+| reviewer 3.3 banned names also blocked in task/block/`include_role` `vars:`, role params, `include_vars`; `bao_create_secret` looks up zone/host from specs itself; test | 5.1, 6 step 5 |
+| reviewer 3.3 guard checks every resolved `delegate_to` target (same deployment, not protected) | 1.7 |
 
 ## What changed in revision 3.4 (rev 3.3 round: configuration, sre, network, pm agree; infrastructure agree with changes, no blockers)
 

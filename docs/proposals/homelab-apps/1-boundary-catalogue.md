@@ -159,12 +159,12 @@ One play per deployment, built at run time:
   override inventory values.
 - **Banned keys in deployment `vars`/`host_vars`** (`catalog.py check`): `zone`, `vmid`, `role`, `type`, `os`,
   `bao_*`, `ansible_*`, `hostvars`, `group_names`, `inventory_*`, `delegate_*`, `deploy_*`, and any variable the
-  pipeline sets. **No Jinja in values** (`{{`, `{%`, `{#` rejected; unit test) (reviewer 13).
+  pipeline sets. **No Jinja in values** (`{{`, `{%`, `{#` rejected) and **no value containing `__` or equal to `mro`** (a plain string could feed a dynamic attribute); unit tests (reviewer 13, 3.3).
 - Version: `version.vars` maps pin, rendered `version.url` and `known[pin]` to the role variables (cfg R3).
 - `rollout` → `serial`, `order`, `any_errors_fatal`; `groups` → ordered sub-plays with `before`/`after` hooks.
 - **Deploy guard** (`pre_tasks`, before any role) reads only inventory-sourced values: host in specs, VMID not in
   `protected.yaml`, `ansible_host` = spec IP and not inside `192.168.67.0/29` (protected subnet), zone = deployment
-  zone (reviewer note).
+  zone; every resolved `delegate_to` target is a host of the same deployment and not protected (reviewer note, 3.3).
 - OpenBao: deploy mints a short-TTL child token **per app** (5.1) used only by `bao_create_secret`; roles never see
   env or tokens.
 

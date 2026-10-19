@@ -8,7 +8,7 @@
 | PR runner | `host-plan` (user `runner`, no guest SSH key, no OpenBao create rights) |
 | Deploy/verify runner | **new label `host-apps`, Unix user `runner-apps`** on CT 300 (Q1 decided by the reviewer's finding): own SSH key `ci-apps` (public key in infra `ansible/keys/ci-apps.pub`, Class C; `base_common` installs it **only on hosts listed in a deployment**, read from the apps clone via `gitea_ci_token`; if that clone fails, existing `ci-apps` keys are **left unchanged** (never removed) and the apply warns and upserts `pipeline: apps clone failed` (reviewer 3.2-g, infra 3.3-1), own OpenBao AppRole files `/etc/openbao/ci-apps/{role_id,secret_id}`; `runner-apply` and `runner-apps` cannot read each other's files; only `/var/lib/devops/locks` is shared via group `devops-locks` |
 | OpenBao | AppRole `ci-apps` (client `runner-apps`, 192.168.70.20/32), policy `ci-apps`: read `secret/data/hm1/platform/ci/apps` (`pve_token_apps`, `gitea_apps_token`) and `auth/token/create/apps-*` only. **One policy per app** `ci-apps-<app>`: `create` only (never `update`, so create-only is enforced server-side), on explicitly listed guest-zone mounts, both `<zone>/secret/data/apps/<app>` and `<zone>/secret/data/apps/<app>/*` (reviewer 3.2-c) and a token role `apps-<app>` (`allowed_policies: [ci-apps-<app>]`, TTL 30 min, non-renewable). `deploy.yml` mints one child token per app play; a role can only ever create its own app's secrets (reviewer 15). Test in step 5: the adguard token is denied on `apps/k3s/*`. New app = its policy + token role in the same Faris standards PR. Apps scripts call `bao_login ci-apps` |
-| Secret writes | **`bao_create_secret`**, a pipeline-owned role in `playbooks/roles/` (Class C, written once; reviewer 16, cfg B1): runs on CT 300 (the AppRole is bound to 192.168.70.20); inputs `path`, `keys` and either `data` or `generate: {length, chars}` plus optional `hash: bcrypt`; validates the path against the app's `catalog.secrets` and the **zone/host the deploy guard captured from inventory** (reviewer 3.2-a); reads `BAO_ZONE_MODE` and the per-app child token itself; writes create-only (`cas=0`; an existing secret = "already created", not an error); returns **only the hash** (plaintext never leaves the role); `no_log` inside; does nothing in check mode. Marker and hash files stay on the guest as today. `app_adguard`'s password block and `svc_k3s` escrow move to it (steps 7–8) (cfg 3.2 clarification) |
+| Secret writes | **`bao_create_secret`**, a pipeline-owned role in `playbooks/roles/` (Class C, written once; reviewer 16, cfg B1): runs on CT 300 (the AppRole is bound to 192.168.70.20); inputs `path`, `keys` and either `data` or `generate: {length, chars}` plus optional `hash: bcrypt`; validates the path against the app's `catalog.secrets` and **zone/host it looks up itself from the infra specs by `inventory_hostname`** (never from variables a caller can pass; test: `include_role` with `vars: {deploy_zone: int}` cannot change the path) (reviewer 3.2-a, 3.3); reads `BAO_ZONE_MODE` and the per-app child token itself; writes create-only (`cas=0`; an existing secret = "already created", not an error); returns **only the hash** (plaintext never leaves the role); `no_log` inside; does nothing in check mode. Marker and hash files stay on the guest as today. `app_adguard`'s password block and `svc_k3s` escrow move to it (steps 7–8) (cfg 3.2 clarification) |
 | Proxmox | `svc-apps@pve` + token, role `DevOpsAppSnapshot` = [VM.Audit, VM.Snapshot] on the pools of zones that have deployments (wifi, iot, shr today; never dmz, so VM 210 is unreachable), plus `VM.Snapshot.Rollback` on the **stg pool only** (reviewer 17). The apps side of `snapshot.py` creates and deletes only `pre-deploy_*` names (a client-side limit: `VM.Snapshot` could delete any snapshot on those pools — **accepted risk**, reviewer 3.2-d). Nightly scan asserts templates and protected VMIDs are in no guest pool |
 | Gitea | repo `homelab/homelab-apps`; protection = infra (merge whitelist `ci-merger` (A, class recomputed by main's policy), `oc-rev` (B), `faris`; required `pr / plan*`; block on rejected; dismiss stale) **plus "restrict approvals to whitelist"** (`oc-rev`, `faris`) so approvals by `ci-apps`, `oc-cfg`, `oc-infra` never count (reviewer 3.2-e); bot `ci-apps` distinct from `ci-merger` |
 | Shared code | from the read-only infra clone: `gitea.py`, `ci-lib.sh` (`lock_hosts`, `bao_login`), `inventory.py`, `specs.py`, `snapshot.py`; infra sha in every report |
@@ -16,15 +16,25 @@
 **PR lint gate** over **everything under `catalog/<app>/`** — role tasks, handlers, defaults, vars, every `.j2`
 anywhere in the entry (incl. `files/**`), and any file used as a `template` src — before render. A lint failure turns
 the `pr / plan` check **red**, so the PR cannot merge and the render diff is skipped (reviewer 12, 3.2 notes 1, f):
-- rejects `__` and `mro` anywhere in a Jinja expression (object/attribute chains run code on the controller; one unit
-  test per spelling) (reviewer 3.2-2);
+- **Jinja is checked on the parsed AST** (`jinja2.Environment().parse()` of every expression and template), not on
+  raw text, because names can be built at render time (reviewer 3.2-2, 3.3):
+  - the `attr` filter is rejected;
+  - an `attribute=` argument (on `map`, `selectattr`, `rejectattr`, `sort`, `groupby`, `sum`, `min`, `max`,
+    `unique`, …) must be a constant string that does not start with `_`;
+  - `Getattr` names starting with `_` or equal to `mro` are rejected;
+  - `Getitem` subscripts must be constants not starting with `_` and not `mro`, except `hostvars[<name>]` and
+    `groups[<name>]` where `<name>` is a plain variable (inventory host and group names);
+  - any constant string containing `__` or equal to `mro` is rejected (catches `'\x5f\x5f'`, `'_'*2` results stay
+    non-constant and fall under the rules above);
+  - unit tests, one per bypass: `attr('_'~'_init_'~'_')`, `'_'*2`, `'%c%c'|format(95,95)`, `'\x5f\x5f'`,
+    `map(attribute=x)`, `foo[var]`, a deployment var holding `__globals__`;
 - rejects `local_action`, `connection: local`, `add_host`, `fetch`, `synchronize`, `script`, `raw` on localhost;
 - `delegate_to` only to **another host of the same deployment** (a host name, or an expression over
   `groups['role_<code>']` limited to the deployment); never `localhost`/`127.0.0.1`/the controller; the deploy guard
   re-checks the resolved value at run time; unit test (cfg 3.2-B1);
 - `check_mode: false` only on tasks that also have `changed_when: false` and use a read-only module (`command`,
   `shell`, `slurp`, `stat`, `uri` with GET) (cfg 3.2-B2);
-- `set_fact`/`register` may not target `zone`, `vmid`, `role`, `type`, `os` or `bao_*`/`deploy_*` names (reviewer 3.2-a);
+- the banned names (`zone`, `vmid`, `role`, `type`, `os`, `bao_*`, `deploy_*`) may not be set by `set_fact`/`register`, any task/block/`include_role` `vars:`, role params, or an `include_vars` file (reviewer 3.2-a, 3.3);
 - rejects every lookup and query in any spelling — `lookup(...)`, `query(...)`, `q(...)`, FQCN
   (`ansible.builtin.*`, `community.*`) and `with_<lookup>` loops — except the plain loop forms `with_items`,
   `with_dict`, `with_list`, `loop`;
