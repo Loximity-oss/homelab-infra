@@ -59,13 +59,24 @@ findings in reviewer 3.2-2, 3.3, 3.5):
   the `pre-deploy_*` snapshots, takes the host locks (holding the fds) and fetches inventory **first**. Then, **once per
   app play** (reviewer R3.6-1), it writes `/run/devops/apps/<run-id>/` (`0750 runner-apps:runner-apps-play`: one `0640`
   token file for that app only, an `env` file, an `ssh-agent` socket holding the `ci-apps` key — the play user never
-  reads the key file) and calls `sudo -u runner-apps-play /usr/local/sbin/apps-play-run <run-id>` (infra 3.6-1).
-- **Wrapper** `apps-play-run` (root-owned, Class C, in infra `host/`): validates `<run-id>` (`^[0-9]+$`), reads the run
-  dir, pins `playbooks/deploy.yml`, the inventory and `--limit` to that deployment's hosts, and runs
-  `/opt/ansible-apps/venv/bin/ansible-playbook` under `systemd-run --collect --wait -p RuntimeMaxSec=<job timeout>`, so
-  the child can never outlive the job and its locks (infra 3.6-3). Sudoers: `runner-apps ALL=(runner-apps-play)
-  NOPASSWD: /usr/local/sbin/apps-play-run *` with `env_reset`, `!setenv`, `secure_path`; nothing else. The run dir is
-  removed by a trap and in `finish()`; locks are released only after the child has exited.
+  reads the key file; socket `0660 runner-apps:runner-apps-play`, one agent per app play, killed in the trap and in
+  `finish()`) and calls `sudo /usr/local/sbin/apps-play-run <run-id>` (infra 3.6-1, 3.7-3).
+- **Wrapper** `apps-play-run` (root-owned, runs **as root**, Class C, in infra `host/`; infra 3.7-1, 3.7-2):
+  - sudoers: `runner-apps ALL=(root) NOPASSWD: /usr/local/sbin/apps-play-run [0-9]*` with `env_reset`, `!setenv`,
+    `secure_path`; nothing else;
+  - validates `<run-id>` (`^[0-9]+$`); the run dir must be a real directory (not a symlink) owned by `runner-apps`,
+    mode `0750`; the token file, `env` file, hosts file and agent socket must be at their fixed paths;
+  - pins `playbooks/deploy.yml`, the inventory, and `--limit` taken **only** from the run dir's hosts file;
+  - starts a transient unit `apps-play-<run-id>` via `systemd-run --collect --wait -p User=runner-apps-play
+    -p RuntimeMaxSec=<job timeout> -p NoNewPrivileges=yes -p PrivateTmp=yes -p ProtectHome=yes -p ProtectSystem=strict
+    -p ReadWritePaths=<run dir> <play HOME> -p InaccessiblePaths=/etc/openbao /var/lib/devops`, loading `SSH_AUTH_SOCK`,
+    the token path, `VAULT_ADDR`, the CA path and `ANSIBLE_*` from the run dir's `env` file (`systemd-run` inherits no
+    environment); output goes to the journal under that unit name;
+  - the child can never outlive the job or its locks (infra 3.6-3). The run dir is removed by a trap and in
+    `finish()`; locks are released only after the unit has exited.
+- **Janitor** (root timer on CT 300, every 10 min, Class C in `host/`): removes run dirs and agents older than the job
+  timeout whose unit is gone; locks need no cleanup (flock releases on process death). Nobody clears locks or run dirs
+  by hand (SRE 3.7-3).
 - **`runner-apps-play`** owns nothing `runner-apps` later reads or runs: read-only checkout, own `0700` HOME, `TMPDIR`,
   `ANSIBLE_LOCAL_TEMP`, `ANSIBLE_REMOTE_TEMP` and ControlPath; not in `devops-locks` (N2, infra 3.6-2, 3.6-3). It can
   read none of `/etc/openbao/*`, the Proxmox token, the Gitea tokens, `$PLANS`, or `runner-apply` files.
@@ -75,7 +86,8 @@ findings in reviewer 3.2-2, 3.3, 3.5):
   `/usr` read-only plus the usual symlinks, `--proc /proc --dev /dev --tmpfs /tmp`, read-only binds of the PR tree, the
   infra and apps clones and the installed collections (never downloaded at render time), from `/etc` only
   `resolv.conf` and `ssl`, one writable bind for the output dir; it asserts the ansible-core version (N1, N3, infra
-  3.6-4). Prerequisite **verified live 2026-10-20**: CT 300 has `nesting=1`, `bubblewrap 0.11.1`, and the full flag set
+  3.6-4). **Collections** (`community.general`, …) are installed at **exact versions** into a root-owned path and bound
+  read-only; a collection version change is Class C, like the allow-list (infra 3.7-4). Prerequisite **verified live 2026-10-20**: CT 300 has `nesting=1`, `bubblewrap 0.11.1`, and the full flag set
   runs as `runner`, so no CT 300 change is needed; fallback if that ever changes: a `systemd-run` sandbox
   (`PrivateNetwork=yes`, `ProtectSystem=strict`, `InaccessiblePaths=/etc/openbao`). An escape during render reaches
   nothing.

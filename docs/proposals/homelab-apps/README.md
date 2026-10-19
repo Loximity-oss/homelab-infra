@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **WIP — revision 3.7, final confirmation** (2026-10-20). Nothing is built until all six engineers agree and Faris approves. |
+| Status | **WIP — revision 3.8, final confirmation** (2026-10-20). Nothing is built until all six engineers agree and Faris approves. |
 | Asked by | Faris, 2026-10-19 |
 | Review | infra issue #125: one `Verdict (<engineer>): agree \| agree with changes \| object` comment per engineer |
 | Files | each under 18 000 characters, so `read_file` (max 20 000) returns it whole |
@@ -48,6 +48,19 @@
 | Agents resolve their issues | Faris approves Class C, root and `homelab/openclaw` work only |
 | Narrow tools / root jobs, never wider tokens | e.g. `svc-apps@pve` can only snapshot; no DevOpsAdmin in apps |
 | Kubernetes workloads | parked; later `clusters/<zone>` GitOps layout; more host RAM before an int cluster |
+
+## What changed in revision 3.8 (rev 3.7 round: configuration, reviewer, network, pm agree; infrastructure, sre agree with changes, no blockers)
+
+| Point | Handled in |
+|---|---|
+| infra 3.7-1 wrapper runs as root (sudoers `(root)`, arg `[0-9]*`), starts a hardened transient unit as `runner-apps-play`, env from the run-dir file; tests | 5b, 6 step 4 |
+| infra 3.7-2 wrapper checks: no symlink, owner `runner-apps`, mode 0750, fixed paths, `--limit` only from the hosts file; tests | 5b, 6 step 4 |
+| infra 3.7-3 one `ssh-agent` per play, socket 0660, killed in trap/`finish()`; test | 5b, 6 step 4 |
+| infra 3.7-4 collections at exact versions, root-owned, read-only; version change = C | 5b |
+| sre 3.7-1 PR lint/render/`bwrap` failure = red check, not an issue | 2.7 |
+| sre 3.7-2 lock `.owner` sidecar; timeout issue names the holder; 4b test | 2.3, 2.7, 6 step 4b |
+| sre 3.7-3 runbook step 9b before cutover; `diag_exec` for `apps-play-*`; journal logging; root janitor, nobody clears by hand | 5b, 6 step 9b |
+| sre 3.7-4 `pre-cutover_*` checked to exist, never auto-pruned; `pre-deploy_*` 7-day retention across cutover | 3.5, 6 step 10 |
 
 ## What changed in revision 3.7 (rev 3.6 round: sre, network, pm agree; reviewer 1 blocker; configuration and infrastructure notes, no blockers)
 

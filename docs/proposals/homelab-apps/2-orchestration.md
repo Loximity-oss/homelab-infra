@@ -78,6 +78,7 @@ Order: (1) deployment removed or host taken out (apps, C) **first**, while the h
 | verify | `ci-verify.sh` locks its whole host set (`--all` = fleet) in one call, for the whole run; `finish()`/exit releases all locks |
 | apps deploy / verify | lock the deployment hosts for the whole run |
 | reboot | new infra `reboot` workflow (3.4) locks the host for the whole reboot; agents never reboot patched hosts directly |
+| Owner files | `lock_hosts` writes `run`, `repo`, `workflow`, `pid`, `start` to a sidecar `host-<hostname>.owner` (same `3770` directory); a lock-wait timeout issue names the holder and notes it may be stale (flock releases on process death) (SRE 3.7-2) |
 | Timeouts | job `timeout-minutes` in `apply.yml`, `patch.yml`, `verify.yml`, `reboot.yml`, apps `deploy.yml` = 240 (> 60 min lock wait + longest run). A lock-wait timeout upserts issue `pipeline: lock wait timeout <host>` (SRE R3-5) |
 | Templates | existing `templates.lock` unchanged |
 
@@ -138,7 +139,8 @@ Faris: approves the Class C PRs; in wifi/iot also creates the UDM policy.
 | apps deploy / L4 / drift / wave stop | `app-verify: <app>/<host>`, PR comment | SRE → oc-cfg |
 | probe alert | Alertmanager → incident run | SRE |
 | apps dispatch | ⚠️ comment + `pipeline: apps dispatch failed` | PM → oc-infra |
-| lock wait timeout | `pipeline: lock wait timeout <host>` | SRE → oc-infra |
+| lock wait timeout | `pipeline: lock wait timeout <host>` (names the holder) | SRE → oc-infra |
+| PR lint / render / `bwrap` failure | red `pr / plan` check on the PR, **not** an issue | PR author |
 | version release / pin expired | `app update: <app> <version>` | PM → oc-cfg |
 
 All of these are resolved and closed by the agents with evidence; only Class C, root and openclaw work go to Faris.

@@ -72,6 +72,7 @@ Hosts in no deployment: `one_at_a_time`. PVE host: manual (Faris).
 | `pre-deploy_*` | apps deploy (`svc-apps@pve`) | 7 days | same job, prefix added |
 | `pre-reboot_*` | infra `reboot` workflow | 7 days | same job, prefix added |
 | `pre-change_*`, `manual_*` | SRE | until removed by SRE | — |
+| `pre-cutover_*` | SRE at step 10(a) | until the SRE removes them after a green night | never pruned automatically (SRE 3.7-4) |
 
 Rollback of a failed deploy: stg automatic (failed L4 hosts); other zones **manual** by the SRE from `pre-deploy_*`
 (runbook row), then the PM opens a revert PR. k3s control nodes are restored as a set after `k3s etcd-snapshot save`.
