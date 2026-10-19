@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **WIP — revision 3, confirmation round** (2026-10-19). Nothing is built until all six engineers agree and Faris approves. |
+| Status | **WIP — revision 3.2, final confirmation** (2026-10-19). Nothing is built until all six engineers agree and Faris approves. |
 | Asked by | Faris, 2026-10-19 |
 | Review | infra issue #125: one `Verdict (<engineer>): agree \| agree with changes \| object` comment per engineer |
 | Files | each under 15 000 characters, so `read_file` (max 20 000) returns it whole |
@@ -46,6 +46,39 @@
 | Agents resolve their issues | Faris approves Class C, root and `homelab/openclaw` work only |
 | Narrow tools / root jobs, never wider tokens | e.g. `svc-apps@pve` can only snapshot; no DevOpsAdmin in apps |
 | Kubernetes workloads | parked; later `clusters/<zone>` GitOps layout; more host RAM before an int cluster |
+
+## What changed in revision 3.2 (confirmation round: pm, network agree; 4 × agree with changes)
+
+Every point of the round, with where it is handled. (B) = was blocking.
+
+| Point | Handled in |
+|---|---|
+| reviewer 12 (B) lint gate: `src:` paths resolve under `catalog/<app>/`, `fetch`/`synchronize`/`script` banned, every lookup/query spelling (FQCN, `query`, `q`, `with_<lookup>`), `.j2` scanned | 5.1 |
+| reviewer 13 (B) no Jinja in deployment values, unit test | 1.7, 6 step 5 |
+| reviewer 14 / cfg (B) precedence: deployment vars as generated group vars below inventory; banned keys incl. `zone`, `vmid`, `role`, `bao_*`; guard reads inventory values | 1.7 |
+| reviewer 15 (B) one OpenBao policy + token role per app, child token per play, isolation test | 5.1, 5.4, 6 steps 4–5 |
+| reviewer 16 / cfg B1 (B) pipeline-owned `bao_create_secret` (CT 300, create-only, path validated, owns env/token/password); roles migrated; no allow-lists | 5.1, 6 steps 7–8 |
+| reviewer 18 / infra R3-1 (B) token wording; `ci-apps` push-blocked by rule `*`; no `.gitea/**` for agents; `oc-pm` no write, server-side token | 2.1, 5.3, 6 step 4 |
+| infra F / reviewer 21 (B) locks dir `3770`, pre-created files, append open, never delete | 2.3, 6 step 4 |
+| SRE B1 / net (B) drill on hm1-wifi-dns02 with Faris informed, `DNSQueryFailed` must stay silent; stg rollback untested | 4.7, 6 step 12 |
+| reviewer 17 Proxmox: snapshot on deployment-zone pools only (not dmz → VM 210 unreachable), Rollback on stg only, `pre-deploy_*` names only | 5.1, 5.4 |
+| reviewer 19 role `meta/**` C; matcher supports `{a,b}` | 5.2 |
+| reviewer 20 `redeploy_app(from_wave)` guard | 2.5 |
+| reviewer 22 `get_pr_status` evidence for apps PRs | 5.3 |
+| reviewer notes: guard rejects `ansible_host` in 192.168.67.0/29; upstream checksum check for B bumps; `ci-apps` comments never reviews/Faris events; `environments.yaml` in the C row; empty wave 1 → wave 2 starts at once | 1.7, 5.2, 2.1, 2.5 |
+| infra R3-2 `gitea_ci_token` read on apps; failed clone = warning | 2.1, 6 step 4 |
+| infra R3-3 revert step 0: `APPS_DISPATCH=0` | 6 |
+| infra R3-4 dispatch reads `$W/verify/verify.json` ∩ `VHOSTS` | 2.1 |
+| infra R3-5 infra-dispatched single host runs outside wave order | 2.5 |
+| cfg R3 role files `{{ role_path }}/../files`; `remote_src` exempt; `version.url` + `version.vars` mapping; iot wave 3; rewrite before first healthcheck; "0 changes" = no live-file/service change | 1.2, 1.5, 1.7, 1.9, 5.1, 6 step 7 |
+| net R3 three UDM policies (tcp 22,80 · udp 53 · icmp); no OpenBao flow from guests; 1.9 purpose text derived from `router`; shr purpose excludes protected CTs; stale flows note + mgt /28 reconcile | 1.5, 1.9, 4.3, 5.4 |
+| SRE R3-1 L4 keeps `example.com` query and adds the rewrite check | 1.5, 4.4b |
+| SRE R3-2/3 silence matches `host` or `deployment`, expires when the reboot run ends | 3.4 |
+| SRE R3-4 prune list incl. `pre-reboot_` | 2.6 |
+| SRE R3-5 lock-wait timeout opens an issue | 2.3, 2.7 |
+| SRE R3-6 revert window: alerts clear and not silenced | 6 |
+| reviewer / cfg / infra stale text (RAM row, status line, canary wording) | 6.2, 2.5, this file |
+| new Q12 (infra still lets oc-infra write `.gitea/*`) — follow-up, not part of this change | 6.3 |
 
 ## What changed in revision 3 (round-2 verdicts: 6 × agree with changes)
 

@@ -43,7 +43,9 @@ which dispatches infra `reboot.yml` (inputs: issue number). The workflow (main's
 1. reads the issue and **checks in code** that its newest answer is a `reboot` comment authored by `faris`
    (the prompt-only check of openclaw #25 becomes a hard gate); refuses protected VMIDs and hosts without a spec;
 2. takes the host lock (2.3). Probe silence: `reboot_guest` (on CT 100, next to Alertmanager) creates a silence
-   for that host's alerts for `reboot.timeout_s` before it dispatches;
+   matching `host=<host>` **or** `deployment=<deployment>` (k3s alerts carry the deployment label) for at most
+   `reboot.timeout_s`, waits for the workflow, and **expires the silence as soon as the run ends** (green or not), so a
+   fast reboot never masks later failures (SRE R3-2, R3-3);
 3. snapshot `pre-reboot_<ts>`; runs the catalogue policy below over SSH; reboots via the Proxmox apply token;
 4. waits for `health`; comments the result; closes the issue on success (or leaves it open with the failure).
 

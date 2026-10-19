@@ -24,7 +24,7 @@
 | openclaw skills `app-method`, `ansible-homelab`, `patching` | rewritten for the catalogue (5.3) | |
 | role comments that point at `docs/apps/patching.md`, `changed.py` | updated or dropped with the move | |
 
-Role file paths become `role_path`-relative (`{{ role_path }}/../../files/...`), never `playbook_dir/../../apps/...`.
+Role file paths become `role_path`-relative: with `role_path = catalog/<app>/role`, files are `{{ role_path }}/../files/...` (cfg R3), never `playbook_dir/../../apps/...`.
 `base_admin_user` (app01's admin user) is guest config: stays in infra.
 
 ## 1.3 Everything DevOps manages, and where
@@ -71,8 +71,8 @@ catalog:
   flows:                         # vocabulary 1.8
     - {from: self-zone, to: self, ports: [53/udp, 53/tcp]}     # clients of its own zone: same L2, no rule
     - {from: self, to: internet, ports: [53/udp, 53/tcp, 853/tcp, 443/tcp]}
-    - {from: self, to: shr, ports: [8200/tcp]}                 # OpenBao
     - {from: hm1-shr-cicd01, to: self, ports: [22/tcp]}        # pipeline SSH
+    # no OpenBao flow: secret writes run on CT 300 via bao_create_secret (5.1), never from the guest (net R3)
   secrets:
     - {path: "<zone>/secret/apps/adguard/<host>", keys: [username, password], by: role}   # generated at first deploy
 version:
@@ -80,6 +80,8 @@ version:
   known:                         # every version a deployment may pin, with its checksum
     v0.107.79: c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f
   source: github:AdguardTeam/AdGuardHome
+  url: "https://github.com/AdguardTeam/AdGuardHome/releases/download/{version}/AdGuardHome_linux_amd64.tar.gz"
+  vars: {version: app_adguard_version, url: app_adguard_url, sha256: app_adguard_sha256}   # role variables set from pin/url/known (cfg R3)
   bump_class: B
 rollout:
   serial: 1
@@ -102,11 +104,12 @@ tests: tests/l4.goss.yaml.j2
 drift: {in_l4: true}
 ```
 
-`probe.hm1.lox-internal.dev → 192.0.2.53` is a fixed AdGuard rewrite added by the role (TEST-NET address, never routed),
-so probes and `health` do not depend on WAN or upstream resolvers.
+`probe.hm1.lox-internal.dev → 192.0.2.53` is a fixed AdGuard rewrite the role creates **before its first healthcheck**
+(TEST-NET address, never routed), so probes and `health` do not depend on WAN or upstream resolvers. L4 checks the
+rewrite and keeps the existing `app-dns-query` (upstream path) check; both stay (cfg R3, SRE R3).
 
 **k3s entry differences:** `role: [k3sc, k3sw]`, `pattern: cluster` with `count: {k3sc: 3, k3sw: 2}`, `size` per
-role, `version.pin: v1.36.5+k3s1` with `known` from the release's `sha256sum-amd64.txt`, `bump_class: C`;
+role, `version.pin: v1.36.5+k3s1` with `known` from the release's `sha256sum-amd64.txt`, `vars: {version: svc_k3s_version, url: svc_k3s_url, sha256: svc_k3s_sha256}`, `bump_class: C`;
 `rollout.groups`: (1) k3sc one at a time, first sorted host `--cluster-init`, `before: kubectl drain`,
 `after: kubectl uncordon`, quorum check (3 `Ready` control nodes, `/readyz` etcd ok) before the next; (2) k3sw one at
 a time with drain/uncordon; (3) escrow play. `health`: k3sc `k3s kubectl get --raw /readyz` = `ok`; k3sw
@@ -145,12 +148,25 @@ host_vars: {}
 
 ## 1.7 `playbooks/deploy.yml`
 
-One play per deployment, built at run time: hosts = deployment hosts ∩ infra inventory; groups `role_<code>` are
-derived from the infra inventory but limited to the deployment's hosts (so `groups['role_k3sc'] | sort | first`
-keeps working); hostvars `zone`, `vmid`, `role` come from the inventory; deployment `vars` and `host_vars` are
-loaded as extra play/host vars; `rollout` maps to `serial`, `order`, `any_errors_fatal`, and `groups` to ordered
-sub-plays with `before`/`after` hooks. Env as today: `BAO_ZONE_MODE`, a short-lived `ci-apps` token for secret
-creation.
+One play per deployment, built at run time:
+
+- hosts = deployment hosts ∩ infra inventory; groups `role_<code>` derived from the infra inventory but limited to the
+  deployment's hosts (so `groups['role_k3sc'] | sort | first` keeps working); `zone`, `vmid`, `role` come from the
+  inventory (host vars).
+- **Variable precedence (reviewer 14, cfg R3):** deployment `vars` become group vars of a generated inventory group
+  `deployment_<zone>_<app>`, and `host_vars` become inventory host vars written **after** the infra hostvars and
+  refused if they name an inventory key. Never `--extra-vars`, never play `vars:`, so nothing a deployment sets can
+  override inventory values.
+- **Banned keys in deployment `vars`/`host_vars`** (`catalog.py check`): `zone`, `vmid`, `role`, `type`, `os`,
+  `bao_*`, `ansible_*`, `hostvars`, `group_names`, `inventory_*`, `delegate_*`, `deploy_*`, and any variable the
+  pipeline sets. **No Jinja in values** (`{{`, `{%`, `{#` rejected; unit test) (reviewer 13).
+- Version: `version.vars` maps pin, rendered `version.url` and `known[pin]` to the role variables (cfg R3).
+- `rollout` → `serial`, `order`, `any_errors_fatal`; `groups` → ordered sub-plays with `before`/`after` hooks.
+- **Deploy guard** (`pre_tasks`, before any role) reads only inventory-sourced values: host in specs, VMID not in
+  `protected.yaml`, `ansible_host` = spec IP and not inside `192.168.67.0/29` (protected subnet), zone = deployment
+  zone (reviewer note).
+- OpenBao: deploy mints a short-TTL child token **per app** (5.1) used only by `bao_create_secret`; roles never see
+  env or tokens.
 
 ## 1.8 Flow vocabulary (`catalog.flows`)
 
@@ -170,19 +186,19 @@ never hand-listed.
 ## 1.9 Environments — `environments.yaml` (Faris 2026-10-19)
 
 The apps repo defines what each guest zone **means for apps**. Network facts (VLAN, CIDR, router, DHCP) stay in
-standards `naming/zones.yaml`; this file never repeats them. Class C.
+standards `naming/zones.yaml`; this file never repeats them (gateway-routed or not is derived from `router`). Class C.
 
 ```yaml
 stg:  {tier: staging,    wave: 1, auto_rollback: true,  status: [beta, stable, deprecated],
        purpose: "test-first: canaries, beta apps, drills; may break"}
 shr:  {tier: production, wave: 2, auto_rollback: false, status: [stable, deprecated],
-       purpose: "shared platform services (k3s, CI, OpenBao); B for updates"}
+       purpose: "shared platform services (k3s); CT 300 (CI) and CT 303 (OpenBao) are protected, have no spec and are never deployment targets"}
 int:  {tier: production, wave: 2, auto_rollback: false, status: [stable, deprecated],
        purpose: "internal services for the home network (a trust zone, not a test tier)"}
 wifi: {tier: production, wave: 2, auto_rollback: false, status: [stable, deprecated],
-       purpose: "client DNS for wifi; gateway-routed (flows need a UDM policy)"}
-iot:  {tier: production, wave: 2, auto_rollback: false, status: [stable, deprecated],
-       purpose: "client DNS for IoT; gateway-routed"}
+       purpose: "client DNS for wifi"}
+iot:  {tier: production, wave: 3, auto_rollback: false, status: [stable, deprecated],
+       purpose: "client DNS for IoT; wave 3 so a bad bump never hits both client DNS zones at once (cfg R3)"}
 dmz:  {tier: production, wave: 3, auto_rollback: false, status: [stable],
        purpose: "internet-facing services; last wave"}
 ```

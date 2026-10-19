@@ -12,16 +12,25 @@ homelab-apps   PR merged → deploy(changed entries/deployments) in waves
 
 - **Triggers are one-way** (infra → apps). Reads go both ways, read-only (1.3).
 - **Dispatch point:** `ci-apply.sh`, after the tests block (incl. stg rollback re-test), before `finish`, locks still
-  held. Hosts = `verify.json` rows with no `fail`, minus rolled-back hosts. If the Ansible run failed (`ok ≠ 0`),
-  nothing is dispatched. Membership: `ci-apply.sh` clones apps main (read) and keeps hosts that appear in a deployment.
+  held. Hosts = `VHOSTS` ∩ rows of **`$W/verify/verify.json`** (not the `$OUT` copy) with no `fail`, minus rolled-back
+  hosts (infra R3-4). If the Ansible run failed (`ok ≠ 0`), nothing is dispatched. Membership: `ci-apply.sh` clones
+  apps main with the infra `gitea_ci_token` (read on homelab-apps, step 4) and keeps hosts that appear in a
+  deployment; a failed clone = no dispatch + ⚠️ warning, never an apply failure (infra R3-2).
 - **Switch:** `APPS_DISPATCH` env in `.gitea/workflows/apply.yml` (`0` until cutover step 8d).
-- **API:** `POST /repos/homelab/homelab-apps/actions/workflows/deploy.yml/dispatches` (ref `main`) with a
-  dispatch-only token of a new Gitea bot `ci-apps` (write on homelab-apps only; read + comment on infra; never in
-  any merge whitelist). Stored at `hm1/platform/ci/apply` key `gitea_apps_dispatch_token` so `ci-apply` can read it.
+- **API:** `POST /repos/homelab/homelab-apps/actions/workflows/deploy.yml/dispatches` (ref `main`) with a token of a
+  new Gitea bot **`ci-apps`**. Gitea tokens cannot be dispatch-only (`write:repository` also allows pushes), so the
+  real limits are (reviewer 18, infra R3-1): write on homelab-apps only; **branch protection rule `*` on homelab-apps
+  allows pushes only for `oc-cfg`, `oc-infra`, `faris`** (so `ci-apps` cannot create a branch); protected `main`;
+  `deploy`/`verify` refuse any ref but `main`; on infra only read + comment; never in any merge whitelist; its comments
+  are never reviews and never Faris events (poller trusts only `faris`). Separate tokens of this bot: infra apply
+  (`hm1/platform/ci/apply` key `gitea_apps_dispatch_token`), the apps pipeline (`hm1/platform/ci/apps`), and the
+  OpenClaw PM tools (aiops secrets, server-side; agents never see it). **`oc-pm` has no Gitea write on apps.**
 - **Untrusted dispatch:** apps `deploy`/`verify` refuse any ref other than `main` and check out main's sha; inputs
-  (`hosts`, `infra_pr`) are intersected with deployments ∩ specs. Write on apps: `ci-apps`, `faris`, the PR authors
-  `oc-cfg`/`oc-infra`, and `oc-pm` (dispatch for `verify_app`/`redeploy_app`). Because `main` is merge-only and the
-  workflows refuse other refs, write access never runs unreviewed code.
+  (`hosts`, `infra_pr`) are intersected with deployments ∩ specs. Write on apps: `ci-apps` (push-blocked), `faris`,
+  and the PR authors `oc-cfg`/`oc-infra`. **No agent can write `.gitea/**`** (removed from oc-infra's apps scope;
+  workflows are Faris/Claude-written, Class C), so a pushed branch only carries main's workflow definitions, whose
+  `deploy` runs on `main` only and whose `pr` uses `pull_request_target` (main's code): branch pushes never run
+  unreviewed workflow code (closes reviewer 18c).
 - **Dispatch failure** never fails the infra apply: the apply comments ⚠️ and upserts issue
   `pipeline: apps dispatch failed` (label `pipeline`) → PM → oc-infra.
 - **Inventory:** apps clones infra main read-only (`inventory.py`, `specs.py`); the infra sha is in every report.
@@ -63,13 +72,13 @@ Order: (1) deployment removed or host taken out (apps, C) **first**, while the h
 | Rule | Detail |
 |---|---|
 | Helper | `lock_hosts <csv>` in infra `ci-lib.sh` (apps uses it from the infra clone): sorted, one fd per host, `flock -w 3600`, released on exit |
-| Files | `/var/lib/devops/locks/host-<hostname>.lock`; directory group-writable for every runner user that takes locks |
+| Files | `/var/lib/devops/locks/host-<hostname>.lock`. Directory `root:devops-locks` mode **3770** (setgid + sticky, not world-writable): no runner can unlink or rename another's lock file (infra F, reviewer 21). Step 4 pre-creates files for all current hosts (`0664`, group `devops-locks`); new ones are created with `umask 002`. `lock_hosts` opens with `exec {fd}>>file` (append) and never deletes or recreates a file |
 | infra apply | locks taken right after `plan_guests.py` + `HOSTS` are computed, **before the pre-apply snapshot**; set = create ∪ replace ∪ update ∪ delete ∪ `HOSTS`; whole fleet when `ansible_all` or `tests/` changes |
 | patching | `scan` takes none (read-only); `patch_run()` locks its host set before `snapshot.py take` |
 | verify | `ci-verify.sh` locks its host set (`--all` = fleet) for the whole run |
 | apps deploy / verify | lock the deployment hosts for the whole run |
 | reboot | new infra `reboot` workflow (3.4) locks the host for the whole reboot; agents never reboot patched hosts directly |
-| Timeouts | job `timeout-minutes` in `apply.yml`, `patch.yml`, `verify.yml`, `reboot.yml`, apps `deploy.yml` = 240 (> 60 min lock wait + longest run) |
+| Timeouts | job `timeout-minutes` in `apply.yml`, `patch.yml`, `verify.yml`, `reboot.yml`, apps `deploy.yml` = 240 (> 60 min lock wait + longest run). A lock-wait timeout upserts issue `pipeline: lock wait timeout <host>` (SRE R3-5) |
 | Templates | existing `templates.lock` unchanged |
 
 ## 2.4 Build from the catalogue ("PM, build Uptime Kuma in int")
@@ -100,7 +109,13 @@ Faris: approves the Class C PRs; in wifi/iot also creates the UDM policy.
 - **Wave failure:** the run stops, raises `pipeline.failed` and an `app-verify: <app>/<host>` issue; remaining waves
   stay pending (shown by `app_status`). Changed hosts: stg rolls back automatically; elsewhere the SRE restores from
   `pre-deploy_*` and the PM opens a revert PR. `redeploy_app(app, from_wave=N)` resumes.
-- A `stable` entry without a stg deployment needs a written `canary_waiver` (1.6).
+- No stg deployment (wave 1 empty): wave 2 starts at once, no `wave_delay` (reviewer note). A `stable` entry without
+  a stg deployment is a **warning** while Q10/Q11 are deferred (1.6); `canary_waiver` applies only after that.
+- Waves come from `environments.yaml` (1.9): stg 1, shr/int/wifi 2, iot 3, dmz 3 — so wifi and iot DNS never change in
+  the same wave (cfg R3).
+- An infra-dispatched deploy of one new/replaced host runs outside wave order; that is correct because the catalogue
+  version is unchanged (infra R3-5).
+- `redeploy_app(app, from_wave=N)` refuses unless every wave below N is green on the same apps sha (reviewer 20).
 
 ## 2.6 Daily timeline (MYT)
 
@@ -108,7 +123,7 @@ Faris: approves the Class C PRs; in wifi/iot also creates the UDM policy.
 |---|---|---|
 | continuous | probes every 60 s → Alertmanager → OpenClaw incident | openclaw |
 | 02:30 | Terraform drift | infra |
-| 03:00 | verify L1–L3, snapshot prune (`pre-apply_`, `pre-patch_`, `pre-deploy_`) | infra |
+| 03:00 | verify L1–L3, snapshot prune (`pre-apply_`, `pre-patch_`, `pre-deploy_`, `pre-reboot_`) | infra |
 | 03:15 | verify L4 + app drift | apps |
 | 03:30 | OpenClaw nightly scan | openclaw |
 | 03:40 / 09:40 / 15:40 / 21:40 | OS patch scan (+ Sev1/2 auto) | infra |
@@ -123,6 +138,7 @@ Faris: approves the Class C PRs; in wifi/iot also creates the UDM policy.
 | apps deploy / L4 / drift / wave stop | `app-verify: <app>/<host>`, PR comment | SRE → oc-cfg |
 | probe alert | Alertmanager → incident run | SRE |
 | apps dispatch | ⚠️ comment + `pipeline: apps dispatch failed` | PM → oc-infra |
+| lock wait timeout | `pipeline: lock wait timeout <host>` | SRE → oc-infra |
 | version release / pin expired | `app update: <app> <version>` | PM → oc-cfg |
 
 All of these are resolved and closed by the agents with evidence; only Class C, root and openclaw work go to Faris.

@@ -54,7 +54,7 @@ so there is no night without L4 and no night with two.
 | Flow | Router | Needs |
 |---|---|---|
 | CT 100 → shr :6443 | coresw | `flows.yaml` entry only (mgt → shr already allowed) |
-| CT 100 (192.168.67.3 only) → wifi/iot DNS host IPs: 53/udp, 80/tcp, icmp, 22/tcp | UDM (Internal → Untrusted is Block All) | `flows.yaml` entry + **UDM allow policy (Class C, Faris creates)** |
+| CT 100 (192.168.67.3 only) → wifi/iot DNS host IPs (192.168.69.10-11, 192.168.74.10-11): 53/udp, 80/tcp, icmp, 22/tcp | UDM (Internal → Untrusted is Block All) | `flows.yaml` entry + **three UDM allow policies (Class C, Faris creates)**: tcp 22,80; udp 53; icmp — all source 192.168.67.3, destination the four IPs (net R3) |
 
   The `file_sd` job emits targets in gateway-routed zones only after oc-net has confirmed the UDM policy exists
   (`state: implemented` in `flows.yaml`); until then those targets are skipped, so no false alerts.
@@ -65,6 +65,12 @@ so there is no night without L4 and no night with two.
   the VIP `/readyz`. Same-subnet L2 traffic: **no flows needed** (oc-net confirmed).
 - They prove the partner works from inside the zone. They do **not** test the gateway-routed path clients from other
   zones use; a probe from another zone is added only if that path matters (none today).
+
+## 4.4b AdGuard L4 additions
+
+`catalog/adguard/tests/l4.goss.yaml.j2` keeps every check of today's `dns.goss.yaml.j2` (incl. `app-dns-query` via
+`example.com`, which proves the upstream path) and adds `probe.hm1.lox-internal.dev` → `192.0.2.53` (the rewrite the
+role creates) and the peer check (SRE R3-1).
 
 ## 4.5 k3s L4 (`catalog/k3s/tests/l4.goss.yaml.j2`, read-only), scoped per role
 
@@ -89,5 +95,7 @@ probe alert / failed test → incident run or issue → SRE triage → fix (PR, 
   → PM verify_guest(host) / verify_app(app, host) → green → close_issue with evidence
 ```
 
-Drill (6, step 10): stop AdGuard on the stg host → `ProbeFailed` must reach OpenClaw within **5 min**
-(60 s interval + 3 m `for` + scrape jitter).
+Drill (6, step 12; SRE B1, net R3): with Faris informed, stop AdGuard on **hm1-wifi-dns02** (one host of a production
+pair) for ≤ 6 min → `ProbeFailed` for that host must reach OpenClaw within **5 min** (60 s interval + 3 m `for` +
+jitter), and `DNSQueryFailed` must **not** fire (pair logic). Then start it and confirm the alert clears. stg
+auto-rollback stays **untested** until a stg deployment exists (Q10/Q11 deferred).
