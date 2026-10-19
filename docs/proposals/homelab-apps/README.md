@@ -48,7 +48,7 @@
 | Narrow tools / root jobs, never wider tokens | e.g. `svc-apps@pve` can only snapshot; no DevOpsAdmin in apps |
 | Kubernetes workloads | parked; later `clusters/<zone>` GitOps layout; more host RAM before an int cluster |
 
-## What changed in revision 3.6 (rev 3.5 round: pm, infrastructure, sre, network agree; reviewer 4 blockers)
+## What changed in revision 3.6 (rev 3.5 round: pm, infrastructure, sre, network agree; configuration agree with changes, no blockers; reviewer 4 blockers)
 
 | Point | Handled in |
 |---|---|
@@ -58,6 +58,8 @@
 | reviewer 3.5-4 (B) `__`/`mro` rejected in every YAML scalar under `catalog/<app>/role/**` | 5.1 |
 | reviewer 3.5-5 parse every expression context (`when`, `until`, `assert.that`, `loop`, module args) | 5.1 |
 | reviewer 3.5-6 tests for 1–5 listed under step 5 | 6 step 5 |
+| cfg 3.5-1 `delegate_to` through a bare variable accepted; the guard checks the resolved target | 5.1 |
+| cfg 3.5-2/3/4 k3s check-mode list and exceptions, escrow test, real-path test, re-check roles against 3.6 rules | 6 step 8 |
 | Claude: **privilege separation** so the lint is not the only boundary: deploy runs Ansible as `runner-apps-play` (no AppRole, Proxmox or Gitea credentials; only the run's child tokens + SSH key); PR render in `bwrap` (no network, no secrets); tests prove both | 5.1, 6 steps 4–5 |
 
 ## What changed in revision 3.5 (rev 3.3 round: reviewer agree with changes, 1 blocker)

@@ -37,9 +37,10 @@ the `pr / plan` check **red**, so the PR cannot merge and the render diff is ski
   - unit tests, one per bypass: `attr('_'~'_init_'~'_')`, `'_'*2`, `'%c%c'|format(95,95)`, `'\x5f\x5f'`,
     `map(attribute=x)`, `foo[var]`, a deployment var holding `__globals__`;
 - rejects `local_action`, `connection: local`, `add_host`, `fetch`, `synchronize`, `script`, `raw` on localhost;
-- `delegate_to` only to **another host of the same deployment** (a host name, or an expression over
-  `groups['role_<code>']` limited to the deployment); never `localhost`/`127.0.0.1`/the controller; the deploy guard
-  re-checks the resolved value at run time; unit test (cfg 3.2-B1);
+- `delegate_to` only to **another host of the same deployment**: a host name, an expression over
+  `groups['role_<code>']`, or a **bare variable** (e.g. `svc_k3s_init_host`) — a variable is accepted because the
+  deploy guard checks every resolved target at run time (same deployment, not protected); never `localhost`,
+  `127.0.0.1` or the controller; unit test (cfg 3.2-B1, 3.5-1);
 - `check_mode: false` only on tasks that also have `changed_when: false` and use a read-only module (`command`,
   `shell`, `slurp`, `stat`, `uri` with GET) (cfg 3.2-B2);
 - the banned names (`zone`, `vmid`, `role`, `type`, `os`, `bao_*`, `deploy_*`) may not be set by `set_fact`/`register`, any task/block/`include_role` `vars:`, role params, or an `include_vars` file (reviewer 3.2-a, 3.3);
