@@ -82,7 +82,8 @@ refresh_check: {checksum_url: https://..., match: <regex>}   # optional weekly u
 
    If anything fails, the live template stays untouched.
 6. Replace the live template.
-   - Back it up (vzdump to `dir-import01`), then delete it without `purge`, because purge drops the per-VMID ACLs.
+   - Back it up (vzdump to `dir-import01`), then delete it. PVE drops the per-VMID ACLs on every destroy, purge or
+     not; `pve-feature-broker` re-adds them within a minute and the builder waits for that (`wait_alloc`).
    - Full-clone the candidate to the target VMID and convert it to a template. If that fails, the old template is
      restored automatically.
    - Set the description (spec, git sha, image sha256, date) and the tags `os-<os>;mgd-tpl;owner-infra`. If PVE refuses
@@ -111,7 +112,10 @@ The build result is posted as a comment on the PR. A deleted spec retires its te
   `svc-tpl-build@pve`. The template description records spec path, git sha, image sha256 and date.
 - **Rebuild without a change**: dispatch the `template` workflow with `spec` (Gitea UI, or the OpenClaw PM's
   `build_template(spec)`; any agent can read results with `template_status`). One spec per run.
-- **Replace is disabled for now**: the builder refuses a spec whose VMID already exists, because PVE drops the
-  VMID's ACLs when the old template is destroyed and nothing re-applies them yet. After every build, root re-applies
-  the scratch ACLs: `for i in 9990 9991 9992; do pveum acl modify /vms/$i --users svc-tpl-build@pve --tokens
-  'svc-tpl-build@pve!pipeline' --roles DevOpsTemplateBuild; done`.
+- **ACLs after a destroy** (since 2026-10-19, infra #115): PVE drops a VMID's ACLs on every destroy (template replace,
+  scratch VMs). `pve-feature-broker` (root, every minute) re-adds the template entries of `proxmox-acls.yaml` from
+  `template_acls` in `/etc/pve-feature-broker.json`: builder on 9000-9099 + 9990-9999, apply clone-only on
+  9000-9099, plan audit on 9000. The builder's `wait_alloc()` waits up to 5 min for it. So replace is enabled
+  (`TPL_ALLOW_REPLACE=1` in the workflow) and nobody re-applies scratch ACLs by hand. Journal:
+  `journalctl -t pve-feature-broker | grep re-applied`. If `proxmox-acls.yaml` changes these entries, change the
+  broker config in the same PR (Class C) and root reinstalls it.
