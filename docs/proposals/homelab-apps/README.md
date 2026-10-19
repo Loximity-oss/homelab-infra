@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **WIP — revision 3.8, final confirmation** (2026-10-20). Nothing is built until all six engineers agree and Faris approves. |
+| Status | **WIP — revision 3.9, final confirmation** (2026-10-20). Nothing is built until all six engineers agree and Faris approves. |
 | Asked by | Faris, 2026-10-19 |
 | Review | infra issue #125: one `Verdict (<engineer>): agree \| agree with changes \| object` comment per engineer |
 | Files | each under 18 000 characters, so `read_file` (max 20 000) returns it whole |
@@ -48,6 +48,18 @@
 | Agents resolve their issues | Faris approves Class C, root and `homelab/openclaw` work only |
 | Narrow tools / root jobs, never wider tokens | e.g. `svc-apps@pve` can only snapshot; no DevOpsAdmin in apps |
 | Kubernetes workloads | parked; later `clusters/<zone>` GitOps layout; more host RAM before an int cluster |
+
+## What changed in revision 3.9 (rev 3.8 round: pm, infrastructure, configuration, sre, network agree; reviewer agree with changes, no blockers)
+
+| Point | Handled in |
+|---|---|
+| reviewer 3.8-1 env file never sourced: exact `KEY=VALUE` allow-list, dangerous keys refused, `--setenv`; test | 5b, 6 step 4 |
+| reviewer 3.8-2 regular files owned by `runner-apps`, `O_NOFOLLOW` + `fstat`, real socket, hosts validated against specs; test | 5b, 6 step 4 |
+| reviewer 3.8-3 exactly one argument; test with `1 --extra` | 5b, 6 step 4 |
+| reviewer 3.8-4 play HOME `/var/lib/runner-apps-play`; extra unit hardening; more `InaccessiblePaths` | 5b |
+| reviewer 3.8-5 `ssh-agent -t <job timeout>`, killed by pid | 5b |
+| reviewer 3.8-6 janitor: no symlink following, `-xdev`, kill by pid/cgroup | 5b |
+| reviewer 3.8-7 stale text: play-user sudoers, step 4 test count, "step 8d" → 10(d) | 6 step 4, 2.1 |
 
 ## What changed in revision 3.8 (rev 3.7 round: configuration, reviewer, network, pm agree; infrastructure, sre agree with changes, no blockers)
 

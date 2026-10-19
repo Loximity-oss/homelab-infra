@@ -16,7 +16,7 @@ homelab-apps   PR merged → deploy(changed entries/deployments) in waves
   hosts (infra R3-4). If the Ansible run failed (`ok ≠ 0`), nothing is dispatched. Membership: `ci-apply.sh` clones
   apps main with the infra `gitea_ci_token` (read on homelab-apps, step 4) and keeps hosts that appear in a
   deployment; a failed clone = no dispatch + ⚠️ warning, never an apply failure (infra R3-2).
-- **Switch:** `APPS_DISPATCH` env in `.gitea/workflows/apply.yml` (`0` until cutover step 8d).
+- **Switch:** `APPS_DISPATCH` env in `.gitea/workflows/apply.yml` (`0` until cutover step 10(d)).
 - **API:** `POST /repos/homelab/homelab-apps/actions/workflows/deploy.yml/dispatches` (ref `main`) with a token of a
   new Gitea bot **`ci-apps`**. Gitea tokens cannot be dispatch-only (`write:repository` also allows pushes), so the
   real limits are (reviewer 18, infra R3-1): write on homelab-apps only; **branch protection rule `*` on homelab-apps

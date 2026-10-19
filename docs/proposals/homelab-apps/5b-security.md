@@ -59,24 +59,37 @@ findings in reviewer 3.2-2, 3.3, 3.5):
   the `pre-deploy_*` snapshots, takes the host locks (holding the fds) and fetches inventory **first**. Then, **once per
   app play** (reviewer R3.6-1), it writes `/run/devops/apps/<run-id>/` (`0750 runner-apps:runner-apps-play`: one `0640`
   token file for that app only, an `env` file, an `ssh-agent` socket holding the `ci-apps` key — the play user never
-  reads the key file; socket `0660 runner-apps:runner-apps-play`, one agent per app play, killed in the trap and in
-  `finish()`) and calls `sudo /usr/local/sbin/apps-play-run <run-id>` (infra 3.6-1, 3.7-3).
+  reads the key file; socket `0660 runner-apps:runner-apps-play`, one agent per app play started with `-t <job
+  timeout>` so a missed trap still expires the key, killed by its recorded pid in the trap and in `finish()`) and calls
+  `sudo /usr/local/sbin/apps-play-run <run-id>` (infra 3.6-1, 3.7-3, reviewer 3.8-5).
 - **Wrapper** `apps-play-run` (root-owned, runs **as root**, Class C, in infra `host/`; infra 3.7-1, 3.7-2):
   - sudoers: `runner-apps ALL=(root) NOPASSWD: /usr/local/sbin/apps-play-run [0-9]*` with `env_reset`, `!setenv`,
     `secure_path`; nothing else;
-  - validates `<run-id>` (`^[0-9]+$`); the run dir must be a real directory (not a symlink) owned by `runner-apps`,
-    mode `0750`; the token file, `env` file, hosts file and agent socket must be at their fixed paths;
+  - refuses unless argc is exactly 1 and `<run-id>` matches `^[0-9]+$` (sudoers `[0-9]*` alone would also match
+    `1 --extra`) (reviewer 3.8-3);
+  - the run dir must be a real directory (not a symlink) owned by `runner-apps`, mode `0750`; the token, `env` and hosts
+    files must be **regular files owned by `runner-apps`**, opened with `O_NOFOLLOW` and checked with `fstat`; the agent
+    path must be a real socket; each hosts-file entry must match the hostname regex and exist in the infra specs before
+    it becomes `--limit` (reviewer 3.8-2);
+  - **never sources or evals the `env` file**: it parses `KEY=VALUE` against an exact allow-list (`SSH_AUTH_SOCK`, the
+    token path, `VAULT_ADDR`, the CA path, and named `ANSIBLE_*` keys only — no free prefix; `LD_*`, `PYTHON*`,
+    `ANSIBLE_CONFIG`, `ANSIBLE_*_PLUGINS`, `ANSIBLE_*LIBRARY` refused) and passes values with `--setenv`
+    (reviewer 3.8-1);
   - pins `playbooks/deploy.yml`, the inventory, and `--limit` taken **only** from the run dir's hosts file;
   - starts a transient unit `apps-play-<run-id>` via `systemd-run --collect --wait -p User=runner-apps-play
     -p RuntimeMaxSec=<job timeout> -p NoNewPrivileges=yes -p PrivateTmp=yes -p ProtectHome=yes -p ProtectSystem=strict
-    -p ReadWritePaths=<run dir> <play HOME> -p InaccessiblePaths=/etc/openbao /var/lib/devops`, loading `SSH_AUTH_SOCK`,
-    the token path, `VAULT_ADDR`, the CA path and `ANSIBLE_*` from the run dir's `env` file (`systemd-run` inherits no
-    environment); output goes to the journal under that unit name;
+    -p ReadWritePaths=<run dir> /var/lib/runner-apps-play -p CapabilityBoundingSet= -p RestrictSUIDSGID=yes
+    -p ProtectProc=invisible -p PrivateDevices=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes
+    -p InaccessiblePaths=/etc/openbao /var/lib/devops <Gitea/Proxmox token paths> <runner-apply dirs>`, with the
+    play HOME at `/var/lib/runner-apps-play` (outside `/home`, which `ProtectHome` hides) and the allow-listed values
+    passed by `--setenv` (`systemd-run` inherits no environment); output goes to the journal under that unit name. File
+    modes stay the main control (reviewer 3.8-4);
   - the child can never outlive the job or its locks (infra 3.6-3). The run dir is removed by a trap and in
     `finish()`; locks are released only after the unit has exited.
-- **Janitor** (root timer on CT 300, every 10 min, Class C in `host/`): removes run dirs and agents older than the job
-  timeout whose unit is gone; locks need no cleanup (flock releases on process death). Nobody clears locks or run dirs
-  by hand (SRE 3.7-3).
+- **Janitor** (root timer on CT 300, every 10 min, Class C in `host/`): removes run dirs older than the job timeout
+  whose unit is gone, **without following symlinks and on one filesystem** (`find -xdev`, no `-L`); kills leftover
+  agents by recorded pid or by cgroup, never by name; locks need no cleanup (flock releases on process death). Nobody
+  clears locks or run dirs by hand (SRE 3.7-3, reviewer 3.8-6).
 - **`runner-apps-play`** owns nothing `runner-apps` later reads or runs: read-only checkout, own `0700` HOME, `TMPDIR`,
   `ANSIBLE_LOCAL_TEMP`, `ANSIBLE_REMOTE_TEMP` and ControlPath; not in `devops-locks` (N2, infra 3.6-2, 3.6-3). It can
   read none of `/etc/openbao/*`, the Proxmox token, the Gitea tokens, `$PLANS`, or `runner-apply` files.
