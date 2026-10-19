@@ -22,8 +22,16 @@ the `pr / plan` check **red**, so the PR cannot merge and the render diff is ski
   - an `attribute=` argument (on `map`, `selectattr`, `rejectattr`, `sort`, `groupby`, `sum`, `min`, `max`,
     `unique`, …) must be a constant string that does not start with `_`;
   - `Getattr` names starting with `_` or equal to `mro` are rejected;
-  - `Getitem` subscripts must be constants not starting with `_` and not `mro`, except `hostvars[<name>]` and
-    `groups[<name>]` where `<name>` is a plain variable (inventory host and group names);
+  - `Getitem` subscripts must be constants not starting with `_` and not `mro`; the only variable subscript allowed is
+    `hostvars[<var>]` (HostVars returns Undefined, never falls back to attributes). `groups[...]` takes a constant only
+    (`role_<code>`), because a dict `getitem` falls back to `getattr` (reviewer 3.5-1);
+  - **filters and tests are allow-listed** (`policy/jinja-allow.yaml`, Class C); anything else fails. Filter names
+    passed as strings (`map('attr', …)`, `select`/`reject`/`selectattr`/`rejectattr` with a non-allow-listed name) and
+    `extract` with a non-constant or `_`-leading argument are rejected (reviewer 3.5-2);
+  - every expression context is parsed, not only `{{ }}`: `when`, `changed_when`, `failed_when`, `until`,
+    `assert.that`, `loop`, `with_*`, and every templated module argument (reviewer 3.5-5);
+  - every YAML scalar under `catalog/<app>/role/**` (defaults, vars, task args) containing `__` or equal to `mro` is
+    rejected, as for deployment values (reviewer 3.5-4);
   - any constant string containing `__` or equal to `mro` is rejected (catches `'\x5f\x5f'`, `'_'*2` results stay
     non-constant and fall under the rules above);
   - unit tests, one per bypass: `attr('_'~'_init_'~'_')`, `'_'*2`, `'%c%c'|format(95,95)`, `'\x5f\x5f'`,
@@ -45,6 +53,23 @@ the `pr / plan` check **red**, so the PR cannot merge and the render diff is ski
 - any `ansible_*` key in role `vars/`/`defaults/`;
 - **no exceptions and no per-role allow-lists**: the only controller-side action a role may use is `include_role:
   bao_create_secret`.
+
+**ansible-core ≥ 2.19** (no re-templating of strings built at runtime) pinned in `requirements.yml` and on both
+runners; `deploy.yml` `pre_tasks` assert the version (reviewer 3.5-3).
+
+**Privilege separation — the lint is defence in depth, not the only boundary** (Claude, rev 3.6; answers the class of
+findings in reviewer 3.2-2, 3.3, 3.5):
+- **Deploy:** `ci-deploy.sh` (main's code, as `runner-apps`) logs in to OpenBao, mints the per-app child tokens, takes
+  the `pre-deploy_*` snapshots and fetches inventory **first**, then runs `ansible-playbook` via `sudo -u
+  runner-apps-play` (a separate unprivileged user, sudoers rule for that one command). `runner-apps-play` can read
+  **none** of: `/etc/openbao/*`, the Proxmox token, the Gitea tokens, `$PLANS`. It receives only the run's child tokens
+  (env, 30-min TTL, create-only on its own app) and read access to the `ci-apps` SSH key. Code that escapes on the
+  controller gains nothing beyond what the role already has on its own guests.
+- **PR render (host-plan):** the offline render runs inside `bwrap` with no network, a read-only bind of the PR tree
+  and the infra/apps clones, an empty `/etc/openbao`, and no access to the runner's home or `$PLANS`. An escape during
+  render reaches nothing.
+- Unit/integration tests in step 5 prove both: a role that tries to read `/etc/openbao/ci-apps/secret_id` or the
+  Proxmox token fails with permission denied at deploy, and a render that tries `curl` fails with no network.
 
 Deployment `vars`/`host_vars`: banned keys and no Jinja (1.7, reviewer 13); `host_vars` keys must be hosts of that
 deployment.
