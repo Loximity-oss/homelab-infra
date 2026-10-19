@@ -1,0 +1,71 @@
+# homelab-apps proposal — older revision tables
+
+Revisions 3.3 and earlier (moved out of README.md to keep it under the read limit). Newer tables are in README.md.
+
+## What changed in revision 3.3 (rev 3.2 round: infrastructure, sre, network agree; reviewer, configuration agree with changes)
+
+| Point | Handled in |
+|---|---|
+| reviewer 3.2-1 (B) lint every `.j2` under `catalog/<app>/**` (incl. `files/**`) and any template src; unit test `files/sub/x.j2` | 5.1, 6 step 5 |
+| reviewer 3.2-2 (B) reject `__` and `mro` in Jinja; one test per spelling | 5.1, 6 step 5 |
+| cfg 3.2-B1 (B) `delegate_to` only to another host of the same deployment, guard re-checks; k3s keeps init-host token reads; `localhost` VIP check → `health`/`probes` | 5.1, 6 step 8 |
+| cfg 3.2-B2 (B) `check_mode: false` only with `changed_when: false` on read-only modules | 5.1, 6 step 7 |
+| cfg 3.2 clarification: `bao_create_secret` `generate`/`hash: bcrypt`, returns only the hash, `no_log`, no-op in check mode, existing secret = already created | 5.1 |
+| reviewer 3.2-a guard-captured zone/host for `bao_create_secret`; no `set_fact`/`register` on banned keys | 5.1 |
+| reviewer 3.2-b `include_vars`/`include_tasks`/`import_tasks` paths resolved statically | 5.1 |
+| reviewer 3.2-c per-app policy: `create` only, explicit guest-zone mounts, with and without host | 5.1 |
+| reviewer 3.2-d `VM.Snapshot` can delete any snapshot in those pools: accepted risk, recorded | 5.1 |
+| reviewer 3.2-e restrict approvals to whitelist on apps `main` | 5.1 |
+| reviewer 3.2-f lint failure = red check (cannot merge), not "Class C" | 5.1 |
+| reviewer 3.2-g `ci-apps.pub` only on deployment hosts | 5.1 |
+| reviewer 3.2-h Q12 tracked as its own infra issue | 6.3 |
+| cfg 3.2 notes: `community.general` in `requirements.yml`; no leftover OpenBao refs in `app_adguard` defaults; version-check validates `version.url` and `known` keys; step 7 exception list | 6 steps 5, 7; 3.3 |
+
+## What changed in revision 3.2 (confirmation round: pm, network agree; 4 × agree with changes)
+
+Every point of the round, with where it is handled. (B) = was blocking.
+
+| Point | Handled in |
+|---|---|
+| reviewer 12 (B) lint gate: `src:` paths resolve under `catalog/<app>/`, `fetch`/`synchronize`/`script` banned, every lookup/query spelling (FQCN, `query`, `q`, `with_<lookup>`), `.j2` scanned | 5.1 |
+| reviewer 13 (B) no Jinja in deployment values, unit test | 1.7, 6 step 5 |
+| reviewer 14 / cfg (B) precedence: deployment vars as generated group vars below inventory; banned keys incl. `zone`, `vmid`, `role`, `bao_*`; guard reads inventory values | 1.7 |
+| reviewer 15 (B) one OpenBao policy + token role per app, child token per play, isolation test | 5.1, 5.4, 6 steps 4–5 |
+| reviewer 16 / cfg B1 (B) pipeline-owned `bao_create_secret` (CT 300, create-only, path validated, owns env/token/password); roles migrated; no allow-lists | 5.1, 6 steps 7–8 |
+| reviewer 18 / infra R3-1 (B) token wording; `ci-apps` push-blocked by rule `*`; no `.gitea/**` for agents; `oc-pm` no write, server-side token | 2.1, 5.3, 6 step 4 |
+| infra F / reviewer 21 (B) locks dir `3770`, pre-created files, append open, never delete | 2.3, 6 step 4 |
+| SRE B1 / net (B) drill on hm1-wifi-dns02 with Faris informed, `DNSQueryFailed` must stay silent; stg rollback untested | 4.7, 6 step 12 |
+| reviewer 17 Proxmox: snapshot on deployment-zone pools only (not dmz → VM 210 unreachable), Rollback on stg only, `pre-deploy_*` names only | 5.1, 5.4 |
+| reviewer 19 role `meta/**` C; matcher supports `{a,b}` | 5.2 |
+| reviewer 20 `redeploy_app(from_wave)` guard | 2.5 |
+| reviewer 22 `get_pr_status` evidence for apps PRs | 5.3 |
+| reviewer notes: guard rejects `ansible_host` in 192.168.67.0/29; upstream checksum check for B bumps; `ci-apps` comments never reviews/Faris events; `environments.yaml` in the C row; empty wave 1 → wave 2 starts at once | 1.7, 5.2, 2.1, 2.5 |
+| infra R3-2 `gitea_ci_token` read on apps; failed clone = warning | 2.1, 6 step 4 |
+| infra R3-3 revert step 0: `APPS_DISPATCH=0` | 6 |
+| infra R3-4 dispatch reads `$W/verify/verify.json` ∩ `VHOSTS` | 2.1 |
+| infra R3-5 infra-dispatched single host runs outside wave order | 2.5 |
+| cfg R3 role files `{{ role_path }}/../files`; `remote_src` exempt; `version.url` + `version.vars` mapping; iot wave 3; rewrite before first healthcheck; "0 changes" = no live-file/service change | 1.2, 1.5, 1.7, 1.9, 5.1, 6 step 7 |
+| net R3 three UDM policies (tcp 22,80 · udp 53 · icmp); no OpenBao flow from guests; 1.9 purpose text derived from `router`; shr purpose excludes protected CTs; stale flows note + mgt /28 reconcile | 1.5, 1.9, 4.3, 5.4 |
+| SRE R3-1 L4 keeps `example.com` query and adds the rewrite check | 1.5, 4.4b |
+| SRE R3-2/3 silence matches `host` or `deployment`, expires when the reboot run ends | 3.4 |
+| SRE R3-4 prune list incl. `pre-reboot_` | 2.6 |
+| SRE R3-5 lock-wait timeout opens an issue | 2.3, 2.7 |
+| SRE R3-6 revert window: alerts clear and not silenced | 6 |
+| reviewer / cfg / infra stale text (RAM row, status line, canary wording) | 6.2, 2.5, this file |
+| new Q12 (infra still lets oc-infra write `.gitea/*`) — follow-up, not part of this change | 6.3 |
+
+## What changed in revision 3 (round-2 verdicts: 6 × agree with changes)
+
+| From | Change | Where |
+|---|---|---|
+| reviewer | **separate runner `host-apps` / user `runner-apps`**, own SSH key and AppRole (Q1 decided); per-app OpenBao create lines; distinct `ci-apps` bot; pool check in nightly scan | 5.1, 5.4 |
+| reviewer, oc-infra | PR job offline only (`pull_request_target`, `host-plan`); lint gate for dangerous constructs; deploy guard in `pre_tasks`; `vars` key ban; dispatch only from `main`, inputs untrusted | 2.1, 2.2 B, 5.1 |
+| reviewer, oc-cfg, oc-infra | classifier: segment matcher with `**`; every unlisted leaf C; full field list; stricter-of for `bump_class`; renames, symlinks, plugin dirs, root config = C; unit tests; docs-only merge never deploys; `health` and rollout gates = C | 5.2 |
+| oc-infra | locks: `lock_hosts` helper, taken before the pre-apply snapshot, set = all touched hosts, scan none, `patch_run`, verify fleet, job timeouts 240 min; dispatch only hosts with no failed test row, nothing if Ansible failed; dispatch failure = warning + issue; `APPS_DISPATCH` in `apply.yml`, enabled in a separate PR; revert order reversed; locks before check-mode runs | 2.1, 2.3, 6 |
+| PM | tracking issue per multi-PR change with PR checklist; SRE verify step in every flow; remove flow (deployment first, then destroy); `plan_from_catalog` briefs + `create_issue` + `mode=remove`; `repo="apps"` everywhere; `app_verify_status`; wave-failure semantics + `redeploy_app(from_wave)` | 2.2, 2.4, 2.5, 5.3 |
+| SRE | `health` contract (shell, exit 0, timeout, no secrets) with real commands; probe record `probe.hm1.lox-internal.dev` (no WAN dependency); snapshot retention table; reboot silence, pair/drain failure paths; inhibit rules; drill 5 min; k3s L4 per role + VIP holder deployment-level; `wave_delay`; cutover snapshot + etcd snapshot + revert trigger 30 min; runbooks | 1.5, 3, 4, 6 |
+| oc-cfg | `version.known` checksums, k3s build metadata = patch; secrets schema with real keys; missing host = warning; `deploy.yml` builds `role_<code>` groups from the deployment; `role_path`-relative files; k3s upgrade hooks + quorum check; **stg AdGuard canary** (`hm1-stg-dns01`); `canary_waiver`; `playbooks/**` to oc-cfg; peer check renamed; read-only reads infra → apps stated | 1, 2, 3, 6 |
+| oc-net | flow vocabulary (`self-zone`, zones, hosts, `internet`); flows resolved per router; narrow UDM policy (CT 100 → 4 DNS IPs: 53/udp, 80/tcp, icmp, 22/tcp, Faris creates); mgt → shr is `flows.yaml` only; gate step 4b before apply in gateway zones; planned IP = spec IP; `flows.yaml` schema first | 1.8, 2.4, 4.3, 5.4 |
+| Claude | **reboots become an infra `reboot` workflow**: Faris's `reboot` comment is checked in code, host lock taken, catalogue policy, `pre-reboot_*`; `reboot_guest` PM tool. **Step 0 vzdump** of all non-protected guests except VM 210 (never touched) | 3.4, 6 |
+| found in review | `comment_issue` truncates at 6 000 chars (reviewer's verdict was cut at point 12) → fix in step 2 | 5.3 |
+
