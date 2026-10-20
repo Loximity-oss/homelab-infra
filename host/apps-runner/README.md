@@ -19,11 +19,11 @@ tokens, `$PLANS` or other runners' files.
 
 `ci-deploy.sh` (as `runner-apps`) logs in, mints the child token, takes snapshots and host locks, then per app play
 creates `/run/devops/apps/<run-id>/` (`<run-id>` = digits, unique per play) and calls
-`sudo /usr/local/sbin/apps-play-run <run-id>`. Everything below is owned by `runner-apps`; nothing group/other-writable.
+`sudo /usr/local/sbin/apps-play-run <run-id>`. Everything below is owned by `runner-apps`, group `runner-apps-play`; nothing group/other-writable; what the play reads (`src/`, `token`, `inventory.yml`) must be group-readable.
 
 | Path | Type / mode | Content |
 |---|---|---|
-| `./` | dir 0750, group `runner-apps-play` | |
+| `./` | dir **2750** (setgid), group `runner-apps-play` | create with `install -d -m 2750 -g runner-apps-play`, then `umask 027`: everything inside inherits the group |
 | `src/apps/`, `src/infra/` | dirs, group-readable | copies of the checked-out main trees **without `.git`**, no symlinks, no special files |
 | `inventory.yml` | file 0640 | inventory for this play |
 | `hosts` | file 0640 | one hostname per line → `--limit`; each must have an infra guest spec in `src/infra` |
