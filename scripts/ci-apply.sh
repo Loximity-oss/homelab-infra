@@ -12,7 +12,10 @@ read -r PR HEAD_SHA <<<"$(python3 "$BASE/scripts/gitea.py" pr-of-commit "$SHA")"
 if [ -z "${PR:-}" ]; then echo "No PR for $SHA; nothing to apply."; exit 0; fi
 OUT="$PLANS/$HEAD_SHA"; W=$(mktemp -d); REPORT="$W/apply.md"; : > "$REPORT"
 note() { echo "$*" >> "$REPORT"; }
-finish() { python3 "$BASE/scripts/gitea.py" comment "$PR" "$REPORT"
+LOCK_WORKFLOW=apply
+trap unlock_hosts EXIT
+finish() { unlock_hosts   # host locks released before the report (step 4b); process exit releases them too
+  python3 "$BASE/scripts/gitea.py" comment "$PR" "$REPORT"
   python3 "$BASE/scripts/gitea.py" refresh-open "$PR" || true   # re-plan open PRs against the new state (#26)
   exit "$1"; }
 export TF_VAR_standards_dir="$OUT/standards"
@@ -37,6 +40,34 @@ c = json.load(open(sys.argv[1])); have = {s["hostname"] for s in load_specs()}
 print(",".join(sorted(have if c["ansible_all"] else set(c["hosts"]) & have)))
 PY
 )
+# ---- Host locks (proposal 2.3, step 4b), BEFORE the pre-apply snapshot, held until finish():
+# create ∪ replace ∪ update ∪ delete ∪ HOSTS; the whole fleet when ansible_all or tests/ changed. Hosts being created
+# or destroyed may have no lock file yet / any more (the janitor creates files for specs on main): skipped, not waited.
+read -r LOCK_SET LOCK_OPT <<<"$(INFRA_ROOT="$BASE" python3 - "$W/plan-guests.json" "$W/applied-changed.json" "$HOSTS" <<'PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["INFRA_ROOT"], "scripts"))
+from specs import load_specs
+g, c = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
+have = {s["hostname"] for s in load_specs()}
+deleted = {d["host"] for d in g["delete"]}
+s = set(g["create"]) | set(g["replace"]) | set(g["update"]) | deleted | set(filter(None, sys.argv[3].split(",")))
+if c["ansible_all"] or any(f.startswith("tests/") for f in c["files"]):
+    s |= have
+opt = set(g["create"]) | deleted
+print((",".join(sorted(s)) or "-") + " " + (",".join(sorted(opt)) or "-"))
+PY
+)"
+[ "$LOCK_SET" = "-" ] && LOCK_SET=""; [ "$LOCK_OPT" = "-" ] && LOCK_OPT=""
+if [ -n "$LOCK_SET" ]; then
+  if lock_hosts "$LOCK_SET" "$LOCK_OPT"; then
+    note "- 🔐 Host locks: $(locked_hosts)"
+    for n in "${LOCK_NOTES[@]}"; do note "  - ⚠️ $n"; done
+  else
+    note "- ❌ **Host locks** not acquired — nothing applied (issue \`pipeline: lock wait timeout <host>\` names the holder)"
+    for n in "${LOCK_NOTES[@]}"; do note "  - $n"; done
+    finish 1
+  fi
+fi
 # Snapshot = existing guests that are updated or configured (not created/replaced/destroyed by this apply).
 SNAP_HOSTS=$(python3 - "$W/plan-guests.json" "$HOSTS" <<'PY'
 import json, sys
@@ -125,10 +156,26 @@ fi
 
 # ---- Ansible: changed hosts that exist, or every host when ansible/ changed (HOSTS, computed above)
 if [ -n "$HOSTS" ]; then
+  # ci-apps key (proposal 5.1, infra 3.3-1): base_common installs ansible/keys/ci-apps.pub only on hosts listed in a
+  # homelab-apps deployment (extra var base_ci_apps_hosts) and removes it elsewhere. If the apps clone or its parse
+  # fails, base_ci_apps_hosts stays undefined: existing ci-apps keys are left unchanged (never removed), the apply
+  # warns and upserts issue "pipeline: apps clone failed".
+  APPS_ARGS=()
+  if clone homelab/homelab-apps "$W/apps" "$GITEA_API_TOKEN" >/dev/null 2>&1 \
+     && python3 "$BASE/scripts/apps_hosts.py" "$W/apps" > "$W/apps-hosts.json" 2> "$W/apps-hosts.err"; then
+    APPS_ARGS=(-e "@$W/apps-hosts.json")
+    note "- 🗝️ ci-apps key hosts (homelab-apps deployments): $(python3 -c 'import json,sys;print(", ".join(json.load(open(sys.argv[1]))["base_ci_apps_hosts"]) or "none")' "$W/apps-hosts.json")"
+  else
+    note "- ⚠️ homelab-apps clone/parse failed: existing ci-apps keys left unchanged"
+    { echo "**homelab-apps clone failed** during the apply of PR #$PR (\`${SHA:0:8}\`): the \`ci-apps\` key was neither"
+      echo "installed nor removed on any host (existing keys left unchanged)."; echo
+      echo '```'; tail -5 "$W/apps-hosts.err" 2>/dev/null | tr -d '`' || true; echo '```'; } > "$W/apps-clone.md"
+    python3 "$BASE/scripts/gitea.py" issue-upsert "pipeline: apps clone failed" pipeline "$W/apps-clone.md" || true
+  fi
   # v7: short-lived ci-apply token so base_common can write each new guest's admin password ONCE (create-only) to
   # OpenBao <zone>/secret/guests/<host>/<instance>; revoked right after the run.
   bao_login ci-apply; export GUEST_SECRET_TOKEN="$BAO_TOKEN" BAO_ZONE_MODE="${BAO_ZONE_MODE:-namespace}"
-  ok=0; (cd "$BASE/ansible" && INFRA_ROOT="$BASE" ansible-playbook -i ../scripts/inventory.py playbooks/site.yml --limit "$HOSTS") > "$W/ansible.log" 2>&1 || ok=$?
+  ok=0; (cd "$BASE/ansible" && INFRA_ROOT="$BASE" ansible-playbook -i ../scripts/inventory.py playbooks/site.yml --limit "$HOSTS" "${APPS_ARGS[@]}") > "$W/ansible.log" 2>&1 || ok=$?
   BAO_TOKEN="$GUEST_SECRET_TOKEN" bao_logout; unset GUEST_SECRET_TOKEN
   if [ $ok -eq 0 ]; then
     note "- ✅ Ansible: $HOSTS — $(grep -A20 'PLAY RECAP' "$W/ansible.log" | grep -c 'failed=0') host(s) ok"

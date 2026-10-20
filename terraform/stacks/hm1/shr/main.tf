@@ -30,7 +30,9 @@ locals {
     for f in fileset("${path.module}/guests", "*.yaml") :
     trimsuffix(f, ".yaml") => yamldecode(file("${path.module}/guests/${f}"))
   }
-  keys = [for f in sort(fileset("${path.module}/../../../../ansible/keys", "*.pub")) : trimspace(file("${path.module}/../../../../ansible/keys/${f}"))]
+  # ci-apps.pub is never injected at create: base_common installs it only on homelab-apps deployment hosts (step 4b).
+  key_files = sort(setsubtract(fileset("${path.module}/../../../../ansible/keys", "*.pub"), ["ci-apps.pub"]))
+  keys      = [for f in local.key_files : trimspace(file("${path.module}/../../../../ansible/keys/${f}"))]
 }
 
 # type: lxc -> lxc-guests (module address kept as "guests" so existing state doesn't move); type: vm -> vm-guests.

@@ -5,6 +5,8 @@ on:
 jobs:
   apply:
     runs-on: host-apply
+    # > template lock wait (60 min) + host lock wait (60 min) + the longest apply (proposal 2.3, step 4b)
+    timeout-minutes: 240
     steps:
       - name: apply saved plan, configure hosts
         env:

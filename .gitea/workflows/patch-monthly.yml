@@ -9,6 +9,7 @@ on:
 jobs:
   monthly:
     runs-on: host-apply
+    timeout-minutes: 240 # > host lock wait (60 min) + the longest patch run (proposal 2.3, step 4b)
     steps:
       - name: apply the approved monthly bundle
         env:
