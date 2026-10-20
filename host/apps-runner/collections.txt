@@ -1,0 +1,3 @@
+# /opt/ansible-apps/collections (root-owned, read-only for the play): name version sha256 of the Galaxy tarball.
+# Installed from the verified tarball only (install.sh); a change is Class C (proposal 5b, infra 3.7-4).
+community.general 13.5.0 54598287e0ea0504aee2d32c884208ddf26f3ac41e0b4e773ff514af210787c4

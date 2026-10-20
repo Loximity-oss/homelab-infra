@@ -1,0 +1,8 @@
+[Unit]
+Description=homelab-apps janitor every 10 minutes
+[Timer]
+OnCalendar=*:0/10
+AccuracySec=30s
+Persistent=false
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Gitea Actions runner: homelab-apps deploy/verify (host mode, user runner-apps, label host-apps)
+After=gitea.service
+[Service]
+User=runner-apps
+Group=runner-apps
+WorkingDirectory=/var/lib/act_runner-apps
+Environment=HOME=/var/lib/act_runner-apps PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/act_runner daemon --config /etc/act_runner-apps/config.yaml
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target

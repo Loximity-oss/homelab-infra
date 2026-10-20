@@ -1,0 +1,4 @@
+# homelab-apps (infra host/apps-runner, Class C): runner-apps may start one app play via the root wrapper, nothing else.
+# The wrapper itself refuses anything but exactly one all-digit argument ([0-9]* here would also match "1 --extra").
+Defaults:runner-apps env_reset, !setenv, secure_path="/usr/sbin:/usr/bin:/sbin:/bin"
+runner-apps ALL=(root) NOPASSWD: /usr/local/sbin/apps-play-run [0-9]*

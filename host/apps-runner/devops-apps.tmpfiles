@@ -1,0 +1,3 @@
+# homelab-apps (infra #127): per-app-play run dirs, created by runner-apps, read by runner-apps-play
+d /run/devops       0755 root        root             -
+d /run/devops/apps  0750 runner-apps runner-apps-play -
