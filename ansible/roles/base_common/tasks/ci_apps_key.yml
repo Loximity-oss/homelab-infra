@@ -1,0 +1,55 @@
+# ci-apps key: present on hosts in base_ci_apps_hosts (from homelab-apps
+# deployments/*/*.yaml via scripts/apps_hosts.py), absent everywhere else.
+# Runs only when base_ci_apps_hosts is defined; if the apps clone failed the
+# var is undefined and keys are left unchanged.
+- name: ci-apps key file present on the control node?
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/../keys/ci-apps.pub"
+  delegate_to: localhost
+  become: false
+  register: base_ci_apps_keyfile
+
+- name: Fail clearly if this host is a deployment host but ansible/keys/ci-apps.pub is missing
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} is in base_ci_apps_hosts but
+      ansible/keys/ci-apps.pub does not exist; add the public key to the repo.
+  when:
+    - inventory_hostname in base_ci_apps_hosts
+    - not base_ci_apps_keyfile.stat.exists
+
+- name: Read ci-apps public key
+  ansible.builtin.set_fact:
+    base_ci_apps_key: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../keys/ci-apps.pub') | trim }}"
+  when: base_ci_apps_keyfile.stat.exists
+
+- name: Ensure /root/.ssh exists
+  ansible.builtin.file:
+    path: /root/.ssh
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: base_ci_apps_keyfile.stat.exists
+
+- name: ci-apps key in root authorized_keys (deployment hosts)
+  ansible.builtin.lineinfile:
+    path: /root/.ssh/authorized_keys
+    line: "{{ base_ci_apps_key }}"
+    regexp: "{{ ' ' ~ (base_ci_apps_key.split()[1] | regex_escape) }}( |$)"
+    create: true
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - base_ci_apps_keyfile.stat.exists
+    - inventory_hostname in base_ci_apps_hosts
+
+- name: ci-apps key removed from root authorized_keys (all other hosts)
+  ansible.builtin.lineinfile:
+    path: /root/.ssh/authorized_keys
+    regexp: "{{ ' ' ~ (base_ci_apps_key.split()[1] | regex_escape) }}( |$)"
+    state: absent
+  when:
+    - base_ci_apps_keyfile.stat.exists
+    - inventory_hostname not in base_ci_apps_hosts
