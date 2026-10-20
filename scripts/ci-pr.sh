@@ -74,9 +74,9 @@ CLASS=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["class"])
 WIP=""; case "$TITLE" in WIP*) WIP=wip;; esac
 python3 "$BASE/scripts/gitea.py" labels "$PR" "class/$CLASS${WIP:+,wip}"
 case "$CLASS$WIP" in
-  A)  GATE="Class A — merging automatically when checks pass."; python3 "$BASE/scripts/gitea.py" automerge "$PR" "$HEAD_SHA" ;;
-  B)  GATE="Class B — needs approval from the Reviewer (\`oc-rev\`)."; python3 "$BASE/scripts/gitea.py" review-request "$PR" oc-rev || true ;;
-  C)  GATE="Class C — needs Faris's approval."; python3 "$BASE/scripts/gitea.py" review-request "$PR" faris || true ;;
+  A)  GATE="Class A — the merge broker merges it within 2 minutes of this check going green (#135)." ;;
+  B)  GATE="Class B — needs approval from the Reviewer (\`oc-rev\`); the merge broker then merges (#135)."; python3 "$BASE/scripts/gitea.py" review-request "$PR" oc-rev || true ;;
+  C)  GATE="Class C — needs Faris's approval; the merge broker then merges (#135)."; python3 "$BASE/scripts/gitea.py" review-request "$PR" faris || true ;;
   *wip) GATE="WIP — planned only; remove \`WIP\` from the title to proceed." ;;
 esac
 python3 - "$OUT/class.json" "$REPORT" "$GATE" > "$OUT/comment.md" <<'PY'

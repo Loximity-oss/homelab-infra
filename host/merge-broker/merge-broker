@@ -1,0 +1,178 @@
+#!/usr/bin/python3 -I
+"""merge-broker — timer on hm1-shr-cicd01 (CT 300), every 2 minutes, user `runner`. Class C (infra #135).
+
+The only automated merger of homelab-infra and homelab-apps. Agents approve; they never merge. For every open PR:
+  1. skip WIP (title or label) and drafts;
+  2. class = <plans>/<prefix><head sha>/class.json, written by main's ci-pr.sh with main's classifier after every check
+     passed (a regular file owned by `runner`, never a symlink). Labels are ignored. No file = not planned = no merge;
+  3. the head must carry `pr / plan (pull_request_target)` = success, posted by Actions (creator null, target a run
+     of this repo), never a status posted with a token;
+  4. no reviewer's latest review is a non-dismissed REQUEST_CHANGES;
+  5. A: merge. B: needs a current approval (APPROVED on the head sha, not stale or dismissed) by oc-rev or faris.
+     C: needs a current approval by faris. The PR author's own approval never counts;
+  6. merge as ci-merger with head_commit_id = that sha (Gitea refuses if the head moved), comment why.
+Gitea token: `gitea_ci_token` (ci-merger) from OpenBao via AppRole ci-plan, read per run, never stored.
+OpenBao sealed or Gitea down = log and exit 0; the next run retries. Log: journalctl -t merge-broker.
+Usage: merge-broker [--dry-run]
+"""
+import json, os, stat, subprocess, sys, syslog, urllib.error, urllib.request
+
+SERVER = os.environ.get("SERVER", "http://127.0.0.1:3000")
+PLANS = "/var/lib/devops/plans"                                     # both repos' ci-pr.sh write here (user runner)
+REPOS = {"homelab/homelab-infra": "",                               # <PLANS>/<sha>/class.json
+         "homelab/homelab-apps": "apps-"}                           # <PLANS>/apps-<sha>/class.json (apps step 5b)
+CHECK = "pr / plan (pull_request_target)"
+APPROVERS = {"A": set(), "B": {"oc-rev", "faris"}, "C": {"faris"}}
+BAO_ENV = {"BAO_ADDR": "https://192.168.70.12:8200", "BAO_CACERT": "/etc/openbao/ca.crt",
+           "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": os.environ.get("HOME", "/tmp")}
+ROLE = "/etc/openbao/ci-plan"
+syslog.openlog("merge-broker")
+
+
+def log(msg):
+    syslog.syslog(msg)
+    print(msg)
+
+
+# ---- pure decision (tested in scripts/tests/test-merge-broker.py)
+def check_ok(combined, repo):
+    """True if CHECK succeeded on this commit and was posted by Actions for this repo."""
+    for s in (combined or {}).get("statuses") or []:
+        if s.get("context") != CHECK:
+            continue
+        state = s.get("status") or s.get("state")
+        by_actions = s.get("creator") is None and str(s.get("target_url") or "").startswith(f"/{repo}/actions/runs/")
+        return state == "success" and by_actions
+    return False
+
+
+def latest_reviews(reviews):
+    """login -> latest APPROVED/REQUEST_CHANGES review (comments and review requests are not verdicts)."""
+    out = {}
+    for r in sorted(reviews or [], key=lambda r: r.get("id", 0)):
+        if r.get("state") in ("APPROVED", "REQUEST_CHANGES"):
+            out[(r.get("user") or {}).get("login")] = r
+    return out
+
+
+def decide(pr, cls, check, reviews):
+    """-> (merge: bool, reason). pr: Gitea PR json; cls: class from class.json or None."""
+    head, author = pr["head"]["sha"], (pr.get("user") or {}).get("login")
+    labels = {l["name"] for l in pr.get("labels") or []}
+    if pr.get("draft") or pr["title"].startswith("WIP") or "wip" in labels:
+        return False, "WIP"
+    if cls not in APPROVERS:
+        return False, f"no class for {head[:8]} (not planned, or checks failed)"
+    if not check:
+        return False, f"{CHECK} not green on {head[:8]}"
+    latest = latest_reviews(reviews)
+    blocked = [u for u, r in latest.items() if r["state"] == "REQUEST_CHANGES" and not r.get("dismissed")]
+    if blocked:
+        return False, f"changes requested by {', '.join(sorted(blocked))}"
+    need = APPROVERS[cls]
+    if not need:
+        return True, f"Class {cls}"
+    ok = sorted(u for u, r in latest.items() if u in need and u != author and r["state"] == "APPROVED"
+                and r.get("commit_id") == head and not r.get("stale") and not r.get("dismissed"))
+    if ok:
+        return True, f"Class {cls}, approved by {', '.join(ok)} on {head[:8]}"
+    return False, f"Class {cls}: waiting for a current approval by {' or '.join(sorted(need - {author}))}"
+
+
+def read_class(plans, sha, prefix=""):
+    """Class from <plans>/<prefix><sha>/class.json, only if it is a regular file owned by this user."""
+    if not all(c in "0123456789abcdef" for c in sha) or len(sha) not in (40, 64):
+        return None
+    p = os.path.join(plans, prefix + sha, "class.json")
+    try:
+        st = os.lstat(p)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or os.path.islink(os.path.dirname(p)):
+            return None
+        with open(p) as f:
+            return json.load(f).get("class")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+# ---- I/O
+def bao_token():
+    def bao(*a, env=None):
+        return subprocess.run(["bao", *a], env={**BAO_ENV, **(env or {})}, capture_output=True, text=True,
+                              timeout=30, check=True).stdout.strip()
+    t = bao("write", "-field=token", "auth/approle/login", f"role_id=@{ROLE}/role_id", f"secret_id=@{ROLE}/secret_id")
+    try:
+        return bao("kv", "get", "-mount=secret", "-field=gitea_ci_token", "hm1/platform/ci/plan", env={"BAO_TOKEN": t})
+    finally:
+        subprocess.run(["bao", "token", "revoke", "-self"], env={**BAO_ENV, "BAO_TOKEN": t}, capture_output=True, timeout=30)
+
+
+class Gitea:
+    def __init__(self, token, repo):
+        self.t, self.r = token, repo
+
+    def api(self, method, path, body=None):
+        req = urllib.request.Request(f"{SERVER}/api/v1/repos/{self.r}{path}", method=method,
+                                     data=json.dumps(body).encode() if body is not None else None,
+                                     headers={"Authorization": f"token {self.t}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = r.read()
+            return json.loads(data) if data else None
+
+    def pulls(self):
+        out, page = [], 1
+        while True:
+            ps = self.api("GET", f"/pulls?state=open&limit=50&page={page}") or []
+            out += ps
+            if len(ps) < 50:
+                return out
+            page += 1
+
+
+def run(repo, plans, prefix, token, dry):
+    g = Gitea(token, repo)
+    for pr in g.pulls():
+        n, sha = pr["number"], pr["head"]["sha"]
+        cls = read_class(plans, sha, prefix)
+        check = check_ok(g.api("GET", f"/commits/{sha}/status"), repo) if cls else False
+        reviews = g.api("GET", f"/pulls/{n}/reviews") if cls and check else []
+        merge, why = decide(pr, cls, check, reviews)
+        if not merge:
+            print(f"{repo}#{n}: {why}")
+            continue
+        if dry:
+            log(f"{repo}#{n}: would merge ({why})")
+            continue
+        try:
+            g.api("POST", f"/pulls/{n}/merge", {"Do": "merge", "head_commit_id": sha, "delete_branch_after_merge": True})
+        except urllib.error.HTTPError as e:   # 405 outdated / not mergeable, 409 head moved: next run sees the new state
+            log(f"{repo}#{n}: merge refused {e.code} {e.read().decode(errors='replace')[:200]}")
+            continue
+        log(f"{repo}#{n}: merged {sha[:8]} ({why})")
+        try:
+            g.api("POST", f"/issues/{n}/comments", {"body": f"Merged by the merge broker: {why} (infra #135)."})
+        except urllib.error.URLError:
+            pass
+
+
+def main():
+    dry = "--dry-run" in sys.argv[1:]
+    try:
+        token = bao_token()
+    except (subprocess.SubprocessError, OSError) as e:
+        log(f"no Gitea token (OpenBao sealed or unreachable?): {type(e).__name__}")
+        return 0
+    rc = 0
+    if not os.path.isdir(PLANS):
+        log(f"no plans dir {PLANS}")
+        return 1
+    for repo, prefix in REPOS.items():
+        try:
+            run(repo, PLANS, prefix, token, dry)
+        except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+            log(f"{repo}: {type(e).__name__}: {str(e)[:200]}")
+            rc = 1
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())
