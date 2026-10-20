@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
 # Nightly / on-demand guest verification (decision 32). Issues "verify: <host>" (label verify): opened or commented
 # when a host fails, closed when it is green again. Exit 1 on any failure -> pipeline.failed (workflow verify) -> SRE.
+# Host locks (step 4b): the whole host set (one host, or the fleet) in ONE lock_hosts call, held for the whole run.
 BASE=$(cd "$(dirname "$0")/.." && pwd)
 source "$BASE/scripts/ci-lib.sh"
 export LC_ALL=C.UTF-8
+LOCK_WORKFLOW=verify
+trap unlock_hosts EXIT
 bao_login ci-apply
 export GITEA_API_TOKEN; GITEA_API_TOKEN=$(secret plan gitea_ci_token)
 PLAN_PVE_TOKEN=$(secret plan pve_token_plan); APPLY_TOKEN=$(secret apply pve_token_apply)
 bao_logout
 W=$(mktemp -d); STD="$W/standards"
 clone homelab/homelab-standards "$STD" "$GITEA_API_TOKEN"
-if [ -n "${HOST:-}" ]; then SEL=(--hosts "$HOST"); else SEL=(--all); fi
+if [ -n "${HOST:-}" ]; then SEL=(--hosts "$HOST"); LOCK_SET="$HOST"; else SEL=(--all); LOCK_SET=$(spec_hosts "$BASE"); fi
+if [ -n "$LOCK_SET" ] && ! lock_hosts "$LOCK_SET"; then
+  echo "host locks not acquired; nothing verified (issue 'pipeline: lock wait timeout <host>' names the holder):"
+  printf '  %s\n' "${LOCK_NOTES[@]}"; exit 1
+fi
+[ ${#LOCK_NOTES[@]} -eq 0 ] || printf 'lock: %s\n' "${LOCK_NOTES[@]}"
 ok=0; PROXMOX_VE_API_TOKEN="$PLAN_PVE_TOKEN" INFRA_ROOT="$BASE" python3 "$BASE/scripts/verify.py" --standards "$STD" "${SEL[@]}" --out "$W/v" > "$W/verify.log" 2>&1 || ok=$?
 [ -f "$W/v/verify.json" ] || { echo "verify did not run:"; tail -30 "$W/verify.log"; exit 1; }
 cat "$W/v/verify.md"
@@ -37,4 +45,5 @@ if [ -z "${HOST:-}" ]; then
   echo "== prune pre-apply_* snapshots older than 7 days"
   PROXMOX_VE_API_TOKEN="$APPLY_TOKEN" INFRA_ROOT="$BASE" python3 "$BASE/scripts/snapshot.py" prune --days 7 || echo "prune: some snapshots not deleted"
 fi
+unlock_hosts
 exit $ok

@@ -6,12 +6,16 @@
 #   monthly  last Saturday 02:00 MYT: only a bundle PR merged with Faris's approval; snapshot -> patch.yml
 #            -e patch_max_sev=4 -e @allow.json (patch_bundle_allow = the approved Sev3/4 packages per host).
 # Never reboots anything. Protected VMIDs / templates / ring0 are never selected (patch_plan.py, snapshot.py, role).
+# Host locks (step 4b): the read-only scan takes none; patch_run() locks its whole host set in ONE lock_hosts call
+# before the snapshot and releases it when the patch run ends.
 # Results kept on the runner in /var/lib/devops/patch/<stamp>-<mode>/ (35 days; 'latest' = newest).
 # Exit 1 on any failure -> pipeline.failed (workflow patch*) -> SRE; a 'patch: failed (<mode>)' issue has the log tail.
 BASE=$(cd "$(dirname "$0")/.." && pwd)
 source "$BASE/scripts/ci-lib.sh"
 export LC_ALL=C.UTF-8
 MODE=${1:?usage: ci-patch.sh scan|bundle|monthly}
+LOCK_WORKFLOW="patch-$MODE"
+trap unlock_hosts EXIT
 bao_login ci-apply
 export GITEA_API_TOKEN; GITEA_API_TOKEN=$(secret plan gitea_ci_token)
 APPLY_TOKEN=$(secret apply pve_token_apply)
@@ -48,21 +52,29 @@ scan() {  # read-only; writes $PATCH_OUT/<host>.scan.json
   [ "$ok" -eq 0 ] || fail_issue "scan failed on at least one host (the others are still handled)" "$PATCH_OUT/scan.log"
 }
 
-patch_run() {  # max_sev hosts [extra ansible args]: snapshot first; only hosts with a snapshot are patched
+patch_run() {  # max_sev hosts [extra ansible args]: locks, then snapshot; only hosts with a snapshot are patched
   local sev=$1 hosts=$2 snapped ok=0; shift 2
   SNAP="pre-patch_$STAMP"
+  if ! lock_hosts "$hosts"; then
+    printf '%s\n' "${LOCK_NOTES[@]}" > "$PATCH_OUT/locks.txt"
+    fail_issue "host locks not acquired for $hosts: nothing patched, no snapshot taken (issue 'pipeline: lock wait timeout <host>' names the holder)" "$PATCH_OUT/locks.txt"
+    return 0
+  fi
+  [ ${#LOCK_NOTES[@]} -eq 0 ] || printf 'lock: %s\n' "${LOCK_NOTES[@]}"
   PROXMOX_VE_API_TOKEN="$APPLY_TOKEN" INFRA_ROOT="$BASE" python3 "$BASE/scripts/snapshot.py" take --name "$SNAP" --hosts "$hosts" > "$PATCH_OUT/snapshot.txt" 2>&1 || true
   cat "$PATCH_OUT/snapshot.txt"
   snapped=$(awk '$2=="ok"{print $1}' "$PATCH_OUT/snapshot.txt" | sort | paste -sd, -)
   if [ "$snapped" != "$hosts" ]; then
     fail_issue "no snapshot \`$SNAP\` for some of $hosts: those hosts were NOT patched" "$PATCH_OUT/snapshot.txt"
   fi
-  [ -n "$snapped" ] || return 0
-  say "patch.yml max_sev=$sev snapshot=$SNAP on $snapped"
-  (cd "$BASE/ansible" && INFRA_ROOT="$BASE" ansible-playbook -i ../scripts/inventory.py playbooks/patch.yml --limit "$snapped" \
-    -e patch_max_sev="$sev" -e patch_snapshot="$SNAP" "$@") > "$PATCH_OUT/patch.log" 2>&1 || ok=$?
-  grep -A40 'PLAY RECAP' "$PATCH_OUT/patch.log" || tail -40 "$PATCH_OUT/patch.log" || true
-  [ "$ok" -eq 0 ] || fail_issue "patch.yml failed (max_sev=$sev); rollout stopped at the first bad host" "$PATCH_OUT/patch.log"
+  if [ -n "$snapped" ]; then
+    say "patch.yml max_sev=$sev snapshot=$SNAP on $snapped"
+    (cd "$BASE/ansible" && INFRA_ROOT="$BASE" ansible-playbook -i ../scripts/inventory.py playbooks/patch.yml --limit "$snapped" \
+      -e patch_max_sev="$sev" -e patch_snapshot="$SNAP" "$@") > "$PATCH_OUT/patch.log" 2>&1 || ok=$?
+    grep -A40 'PLAY RECAP' "$PATCH_OUT/patch.log" || tail -40 "$PATCH_OUT/patch.log" || true
+    [ "$ok" -eq 0 ] || fail_issue "patch.yml failed (max_sev=$sev); rollout stopped at the first bad host" "$PATCH_OUT/patch.log"
+  fi
+  unlock_hosts
 }
 
 case "$MODE" in

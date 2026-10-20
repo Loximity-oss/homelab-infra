@@ -9,6 +9,7 @@ on:
 jobs:
   patch:
     runs-on: host-apply
+    timeout-minutes: 240 # > host lock wait (60 min) + the longest patch run (proposal 2.3, step 4b)
     steps:
       - name: scan, Sev1/2 on ring 1, reboot issues
         env:
