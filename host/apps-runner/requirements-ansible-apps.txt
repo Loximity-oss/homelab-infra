@@ -1,6 +1,8 @@
 # /opt/ansible-apps/venv (homelab-apps 5b): pip install --require-hashes --no-deps --only-binary=:all: -r this file.
 # CT 300: CPython 3.14, x86_64, glibc >= 2.28. Changing a pin is Class C. The infra venv is not touched.
 ansible-core==2.19.9 --hash=sha256:18de80e3ea5a89d2ea84e4d4a3c6d7c121ea62fc3af2877ba083784e3d90b419
+# bcrypt: hash: bcrypt in apps playbooks/roles/bao_create_secret (Python 3.14 has no crypt). abi3 wheels, glibc 2.28/2.34
+bcrypt==5.0.0 --hash=sha256:611f0a17aa4a25a69362dcc299fda5c8a3d4f160e2abb3831041feb77393a14a --hash=sha256:f8429e1c410b4073944f03bd778a9e066e7fad723564a52ff91841d278dfc822 --hash=sha256:89042e61b5e808b67daf24a434d89bab164d4de1746b37a8d173b6b14f3db9ff --hash=sha256:0c8e093ea2532601a6f686edbc2c6b2ec24131ff5c52f7610dd64fa4553b5464
 cffi==2.1.1 --hash=sha256:b0431303acaea1089ad4b3e9ce4e6518193def1118d4073ca848635ee4ea2e96
 cryptography==50.0.2 --hash=sha256:4061c0079120205fb760c58acab6443e217307dcf05e3702cf970e0689972856
 jinja2==3.1.6 --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
