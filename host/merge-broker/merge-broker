@@ -12,10 +12,10 @@ The only automated merger of homelab-infra and homelab-apps. Agents approve; the
      C: needs a current approval by faris. The PR author's own approval never counts;
   6. merge as ci-merger with head_commit_id = that sha (Gitea refuses if the head moved), comment why.
 Gitea token: `gitea_ci_token` (ci-merger) from OpenBao via AppRole ci-plan, read per run, never stored.
-OpenBao sealed or Gitea down = log and exit 0; the next run retries. Log: journalctl -t merge-broker.
+OpenBao sealed or Gitea down = log and exit 0; the next run retries. Log: journalctl -u merge-broker.
 Usage: merge-broker [--dry-run]
 """
-import json, os, stat, subprocess, sys, syslog, urllib.error, urllib.request
+import json, os, stat, subprocess, sys, urllib.error, urllib.request
 
 SERVER = os.environ.get("SERVER", "http://127.0.0.1:3000")
 PLANS = "/var/lib/devops/plans"                                     # both repos' ci-pr.sh write here (user runner)
@@ -26,12 +26,10 @@ APPROVERS = {"A": set(), "B": {"oc-rev", "faris"}, "C": {"faris"}}
 BAO_ENV = {"BAO_ADDR": "https://192.168.70.12:8200", "BAO_CACERT": "/etc/openbao/ca.crt",
            "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": os.environ.get("HOME", "/tmp")}
 ROLE = "/etc/openbao/ci-plan"
-syslog.openlog("merge-broker")
 
 
 def log(msg):
-    syslog.syslog(msg)
-    print(msg)
+    print(msg, flush=True)   # journald tags the unit's stdout as merge-broker (one line, no syslog copy)
 
 
 # ---- pure decision (tested in scripts/tests/test-merge-broker.py)
@@ -76,7 +74,10 @@ def decide(pr, cls, check, reviews):
                 and r.get("commit_id") == head and not r.get("stale") and not r.get("dismissed"))
     if ok:
         return True, f"Class {cls}, approved by {', '.join(ok)} on {head[:8]}"
-    return False, f"Class {cls}: waiting for a current approval by {' or '.join(sorted(need - {author}))}"
+    others = sorted(need - {author})
+    if not others:   # e.g. a Class C PR authored by faris: nobody else may approve it, Faris merges it by hand
+        return False, f"Class {cls} authored by {author}: only {author} merges it (by hand)"
+    return False, f"Class {cls}: waiting for a current approval by {' or '.join(others)}"
 
 
 def read_class(plans, sha, prefix=""):
