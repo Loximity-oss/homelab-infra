@@ -5,7 +5,7 @@
 #   bash install.sh                      # everything except runner registration
 #   bash install.sh --register < token   # also registers the runner (Gitea repo registration token on stdin)
 set -euo pipefail
-export LANG=C.UTF-8 LC_ALL=C.UTF-8          # ansible refuses to start without a UTF-8 locale (pct exec has none)
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8          # ansible refuses to start without a UTF-8 locale (pct exec has none)
 cd "$(dirname "$0")"
 [ "$(id -u)" = 0 ] && [ "$(hostname)" = hm1-shr-cicd01 ] || { echo "run as root on hm1-shr-cicd01"; exit 1; }
 for u in runner-apps runner-apps-play; do id "$u" >/dev/null; done
@@ -55,22 +55,27 @@ echo "  public key (goes to homelab-infra ansible/keys/ci-apps.pub, step 4b):"; 
 say "runner act_runner-apps (label host-apps, repo homelab-apps only)"
 install -d -o root -g runner-apps -m 0750 /etc/act_runner-apps
 install -d -o runner-apps -g runner-apps -m 0750 $H/work
-if [ ! -f /etc/act_runner-apps/config.yaml ]; then
-  act_runner generate-config > /tmp/act_runner-apps.yaml
-  python3 - /tmp/act_runner-apps.yaml <<'PY'
-import sys, yaml
-p = sys.argv[1]; c = yaml.safe_load(open(p))
-c["runner"].update({"file": "/var/lib/act_runner-apps/.runner", "capacity": 1, "labels": ["host-apps:host"]})
-c.setdefault("cache", {})["enabled"] = False
-c.setdefault("host", {})["workdir_parent"] = "/var/lib/act_runner-apps/work"
-yaml.safe_dump(c, open(p, "w"), sort_keys=False)
-PY
+if [ ! -f /etc/act_runner-apps/config.yaml ]; then          # gitea-runner v4: written here, not `config generate`
+  cat > /tmp/act_runner-apps.yaml <<'Y'
+log:
+  level: info
+runner:
+  file: /var/lib/act_runner-apps/.runner
+  capacity: 1
+  timeout: 4h
+  labels: ["host-apps:host"]
+cache:
+  enabled: false
+host:
+  workdir_parent: /var/lib/act_runner-apps/work
+Y
   install -o root -g runner-apps -m 0640 /tmp/act_runner-apps.yaml /etc/act_runner-apps/config.yaml; rm -f /tmp/act_runner-apps.yaml
 fi
 if [ "${1:-}" = --register ] && [ ! -s $H/.runner ]; then
   read -r REG
-  (cd $H && sudo -u runner-apps act_runner register --no-interactive --config /etc/act_runner-apps/config.yaml \
-     --instance http://192.168.70.20:3000 --token "$REG" --name hm1-shr-cicd01-apps --labels host-apps:host >/dev/null)
+  (cd $H && GITEA_RUNNER_REGISTRATION_TOKEN="$REG" runuser -u runner-apps -- \
+     act_runner register --no-interactive --config /etc/act_runner-apps/config.yaml \
+     --instance http://192.168.70.20:3000 --name hm1-shr-cicd01-apps --labels host-apps:host >/dev/null)
   unset REG; chmod 0600 $H/.runner; echo "  registered"
 fi
 if [ -s $H/.runner ]; then systemctl enable --now act_runner-apps.service >/dev/null; echo "  act_runner-apps: $(systemctl is-active act_runner-apps)"
