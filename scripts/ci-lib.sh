@@ -64,6 +64,7 @@ lock_timeout_issue() {  # host reason
     echo '```'; _lock_owner_read "$h"; echo '```'
     echo "The holder may be **stale**: flock releases a lock when its process dies, so if that pid/run is gone the"
     echo "owner file is out of date and the lock is held by another (unrecorded) process, or by a child of the holder."
+    echo "The lock fds are not close-on-exec, so children of an apply/patch/verify (e.g. Ansible ssh ControlPersist masters, 60 s) inherit them: unlock_hosts uses flock -u, so normal runs are fine, but if a run was killed (job timeout or crash) the lock stays held until those children exit (up to about 60 s)."
     echo "Nobody clears locks by hand (SRE runbook: stale locks)."
     echo
     echo "**Waiting run:**"

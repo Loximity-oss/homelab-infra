@@ -35,7 +35,7 @@ check "no file created or removed" test "$(listing)" = "$before"
 
 # --- 2. MAIN CASE: an apply waits on a held lock; the timeout issue names the owner
 printf 'run=4242\nurl=http://gitea/homelab/homelab-infra/actions/runs/77\nrepo=homelab/homelab-infra\nworkflow=patch-scan\npid=31337\nhost=hm1-shr-cicd01\nstart=2026-10-20T03:40:00Z\n' > "$LOCK_DIR/host-$B.owner"
-flock "$LOCK_DIR/host-$B.lock" sleep 30 & HOLDER=$!
+flock -o "$LOCK_DIR/host-$B.lock" sleep 30 & HOLDER=$!
 sleep 0.5
 rm -f "$T/issues/titles"
 t0=$(date +%s)
@@ -46,7 +46,7 @@ check "it waited about LOCK_WAIT" test $((t1 - t0)) -ge 2
 check "no lock left held after a failed call" test -z "$(locked_hosts)"
 check "host locked before the timeout was released" flock -n "$LOCK_DIR/host-$A.lock" true
 check "issue title names the host" grep -qx "pipeline: lock wait timeout $B" "$T/issues/titles"
-I="$T/issues/pipeline_lock_wait_timeout_$B"
+I="$T/issues/pipeline__lock_wait_timeout_$B"
 check "issue names the holder's workflow" grep -q 'workflow=patch-scan' "$I"
 check "issue names the holder's run" grep -q 'run=4242' "$I"
 check "issue names the holder's pid" grep -q 'pid=31337' "$I"
@@ -57,7 +57,7 @@ check "no file created or removed" test "$(listing)" = "$before"
 
 # --- 3. the same apply succeeds when the holder releases within the wait
 kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
-flock "$LOCK_DIR/host-$B.lock" sleep 1 & HOLDER=$!
+flock -o "$LOCK_DIR/host-$B.lock" sleep 1 & HOLDER=$!
 sleep 0.3
 LOCK_WAIT=10
 check "waiting apply gets the lock after release" lock_hosts "$A,$B"
