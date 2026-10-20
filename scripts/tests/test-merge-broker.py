@@ -83,6 +83,21 @@ class Decide(unittest.TestCase):
         self.assertFalse(self.d("C", [rv("faris", "APPROVED", i=1), rv("faris", "REQUEST_CHANGES", i=2)]))
 
 
+class Refresh(unittest.TestCase):
+    def test_stale_pr_refreshed(self):
+        self.assertTrue(mb.needs_refresh({**pr(), "merge_base": OLD}, SHA))
+
+    def test_current_pr_not_refreshed(self):
+        self.assertFalse(mb.needs_refresh({**pr(), "merge_base": SHA}, SHA))
+
+    def test_wip_draft_and_unknown_not_refreshed(self):
+        self.assertFalse(mb.needs_refresh({**pr(title="WIP: x"), "merge_base": OLD}, SHA))
+        self.assertFalse(mb.needs_refresh({**pr(labels=["wip"]), "merge_base": OLD}, SHA))
+        self.assertFalse(mb.needs_refresh({**pr(draft=True), "merge_base": OLD}, SHA))
+        self.assertFalse(mb.needs_refresh({**pr(), "merge_base": OLD}, ""))      # infra: no main sha = never
+        self.assertFalse(mb.needs_refresh(pr(), SHA))                            # no merge_base field
+
+
 class Check(unittest.TestCase):
     def test_actions_status(self):
         self.assertTrue(mb.check_ok(status(), REPO))
@@ -185,6 +200,38 @@ class Run(unittest.TestCase):
                 mb.Gitea = orig
             merged = [(p, b["head_commit_id"]) for m, p, b in calls if m == "POST" and p.endswith("/merge")]
             self.assertEqual(merged, [("/pulls/1/merge", "1" * 40), ("/pulls/3/merge", "3" * 40)])
+
+
+class RunRefresh(unittest.TestCase):
+    def go(self, repo):
+        calls = []
+        stale = {"number": 9, "title": "x", "user": {"login": "faris"}, "labels": [], "head": {"sha": "9" * 40}, "merge_base": OLD}
+
+        class Fake(mb.Gitea):
+            def api(self, method, path, body=None):
+                calls.append((method, path))
+                if path == "/branches/main":
+                    return {"commit": {"id": SHA}}
+                if path.startswith("/pulls?"):
+                    return [stale]
+                if path.startswith("/commits/"):
+                    return status(url=f"/{repo}/actions/runs/1/jobs/1")
+                return []
+        orig, mb.Gitea = mb.Gitea, Fake
+        try:
+            with tempfile.TemporaryDirectory() as plans:
+                mb.run(repo, plans, "", "t", dry=False)
+        finally:
+            mb.Gitea = orig
+        return calls
+
+    def test_apps_updates_stale(self):
+        self.assertIn(("POST", "/pulls/9/update?style=merge"), self.go("homelab/homelab-apps"))
+
+    def test_infra_never_updates(self):
+        calls = self.go("homelab/homelab-infra")
+        self.assertFalse(any("/update" in p for m, p in calls))
+        self.assertNotIn(("GET", "/branches/main"), calls)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,9 @@ The only automated merger of homelab-infra and homelab-apps. Agents approve; the
   5. A: merge. B: needs a current approval (APPROVED on the head sha, not stale or dismissed) by oc-rev or faris.
      C: needs a current approval by faris. The PR author's own approval never counts;
   6. merge as ci-merger with head_commit_id = that sha (Gitea refuses if the head moved), comment why.
+Refresh (homelab-apps only): an open non-WIP PR whose merge base is not main's head is updated from main as ci-merger,
+which starts a new `pr` run (job-token updates start none). Infra is excluded: its open PRs are refreshed by ci-apply.sh
+after the apply, so plans are made against the applied state.
 Gitea token: `gitea_ci_token` (ci-merger) from OpenBao via AppRole ci-plan, read per run, never stored.
 OpenBao sealed or Gitea down = log and exit 0; the next run retries. Log: journalctl -u merge-broker.
 Usage: merge-broker [--dry-run]
@@ -21,6 +24,7 @@ SERVER = os.environ.get("SERVER", "http://127.0.0.1:3000")
 PLANS = "/var/lib/devops/plans"                                     # both repos' ci-pr.sh write here (user runner)
 REPOS = {"homelab/homelab-infra": "",                               # <PLANS>/<sha>/class.json
          "homelab/homelab-apps": "apps-"}                           # <PLANS>/apps-<sha>/class.json (apps step 5b)
+REFRESH = {"homelab/homelab-apps"}                                  # repos whose stale PRs the broker updates
 CHECK = "pr / plan (pull_request_target)"
 APPROVERS = {"A": set(), "B": {"oc-rev", "faris"}, "C": {"faris"}}
 BAO_ENV = {"BAO_ADDR": "https://192.168.70.12:8200", "BAO_CACERT": "/etc/openbao/ca.crt",
@@ -80,6 +84,14 @@ def decide(pr, cls, check, reviews):
     return False, f"Class {cls}: waiting for a current approval by {' or '.join(others)}"
 
 
+def needs_refresh(pr, main_sha):
+    """True if a non-WIP, non-draft PR was last planned against an older main (Gitea's merge_base)."""
+    labels = {l["name"] for l in pr.get("labels") or []}
+    if pr.get("draft") or pr["title"].startswith("WIP") or "wip" in labels:
+        return False
+    return bool(main_sha) and bool(pr.get("merge_base")) and pr["merge_base"] != main_sha
+
+
 def read_class(plans, sha, prefix=""):
     """Class from <plans>/<prefix><sha>/class.json, only if it is a regular file owned by this user."""
     if not all(c in "0123456789abcdef" for c in sha) or len(sha) not in (40, 64):
@@ -131,8 +143,19 @@ class Gitea:
 
 def run(repo, plans, prefix, token, dry):
     g = Gitea(token, repo)
+    main_sha = (g.api("GET", "/branches/main") or {}).get("commit", {}).get("id", "") if repo in REFRESH else ""
     for pr in g.pulls():
         n, sha = pr["number"], pr["head"]["sha"]
+        if needs_refresh(pr, main_sha):
+            if dry:
+                log(f"{repo}#{n}: would update from main {main_sha[:8]}")
+                continue
+            try:
+                g.api("POST", f"/pulls/{n}/update?style=merge")
+                log(f"{repo}#{n}: updated from main {main_sha[:8]} (new pr run follows)")
+            except urllib.error.HTTPError as e:   # 409 conflict: the author must merge main by hand
+                print(f"{repo}#{n}: update from main refused {e.code} {e.read().decode(errors='replace')[:160]}")
+            continue
         cls = read_class(plans, sha, prefix)
         check = check_ok(g.api("GET", f"/commits/{sha}/status"), repo) if cls else False
         reviews = g.api("GET", f"/pulls/{n}/reviews") if cls and check else []
