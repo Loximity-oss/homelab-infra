@@ -3,7 +3,7 @@
 
 The only automated merger of homelab-infra and homelab-apps. Agents approve; they never merge. For every open PR:
   1. skip WIP (title or label) and drafts;
-  2. class = <plans>/<head sha>/class.json, written by main's ci-pr.sh with main's classifier after every check
+  2. class = <plans>/<prefix><head sha>/class.json, written by main's ci-pr.sh with main's classifier after every check
      passed (a regular file owned by `runner`, never a symlink). Labels are ignored. No file = not planned = no merge;
   3. the head must carry `pr / plan (pull_request_target)` = success, posted by Actions (creator null, target a run
      of this repo), never a status posted with a token;
@@ -18,8 +18,9 @@ Usage: merge-broker [--dry-run]
 import json, os, stat, subprocess, sys, syslog, urllib.error, urllib.request
 
 SERVER = os.environ.get("SERVER", "http://127.0.0.1:3000")
-REPOS = {"homelab/homelab-infra": "/var/lib/devops/plans",          # ci-pr.sh $PLANS
-         "homelab/homelab-apps": "/var/lib/devops/apps-plans"}      # apps ci-pr.sh (migration step 5b)
+PLANS = "/var/lib/devops/plans"                                     # both repos' ci-pr.sh write here (user runner)
+REPOS = {"homelab/homelab-infra": "",                               # <PLANS>/<sha>/class.json
+         "homelab/homelab-apps": "apps-"}                           # <PLANS>/apps-<sha>/class.json (apps step 5b)
 CHECK = "pr / plan (pull_request_target)"
 APPROVERS = {"A": set(), "B": {"oc-rev", "faris"}, "C": {"faris"}}
 BAO_ENV = {"BAO_ADDR": "https://192.168.70.12:8200", "BAO_CACERT": "/etc/openbao/ca.crt",
@@ -78,11 +79,11 @@ def decide(pr, cls, check, reviews):
     return False, f"Class {cls}: waiting for a current approval by {' or '.join(sorted(need - {author}))}"
 
 
-def read_class(plans, sha):
-    """Class from <plans>/<sha>/class.json, only if it is a regular file owned by this user."""
+def read_class(plans, sha, prefix=""):
+    """Class from <plans>/<prefix><sha>/class.json, only if it is a regular file owned by this user."""
     if not all(c in "0123456789abcdef" for c in sha) or len(sha) not in (40, 64):
         return None
-    p = os.path.join(plans, sha, "class.json")
+    p = os.path.join(plans, prefix + sha, "class.json")
     try:
         st = os.lstat(p)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or os.path.islink(os.path.dirname(p)):
@@ -127,11 +128,11 @@ class Gitea:
             page += 1
 
 
-def run(repo, plans, token, dry):
+def run(repo, plans, prefix, token, dry):
     g = Gitea(token, repo)
     for pr in g.pulls():
         n, sha = pr["number"], pr["head"]["sha"]
-        cls = read_class(plans, sha)
+        cls = read_class(plans, sha, prefix)
         check = check_ok(g.api("GET", f"/commits/{sha}/status"), repo) if cls else False
         reviews = g.api("GET", f"/pulls/{n}/reviews") if cls and check else []
         merge, why = decide(pr, cls, check, reviews)
@@ -161,12 +162,12 @@ def main():
         log(f"no Gitea token (OpenBao sealed or unreachable?): {type(e).__name__}")
         return 0
     rc = 0
-    for repo, plans in REPOS.items():
-        if not os.path.isdir(plans):
-            print(f"{repo}: no plans dir {plans}, skipped")
-            continue
+    if not os.path.isdir(PLANS):
+        log(f"no plans dir {PLANS}")
+        return 1
+    for repo, prefix in REPOS.items():
         try:
-            run(repo, plans, token, dry)
+            run(repo, PLANS, prefix, token, dry)
         except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
             log(f"{repo}: {type(e).__name__}: {str(e)[:200]}")
             rc = 1

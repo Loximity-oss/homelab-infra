@@ -11,7 +11,7 @@ never merge. Branch protection merge whitelist = `ci-merger`, `faris`.
 
 Never: WIP/draft, a non-dismissed REQUEST_CHANGES, no `class.json`, the author's own approval, a status posted with a token.
 Class comes only from `<plans>/<sha>/class.json` (main's `ci-pr.sh` + main's classifier; infra
-`/var/lib/devops/plans`, apps `/var/lib/devops/apps-plans`). Labels are display only.
+`/var/lib/devops/plans/<sha>/`, apps `/var/lib/devops/plans/apps-<sha>/`). Labels are display only.
 
 | File | Installed as |
 |---|---|

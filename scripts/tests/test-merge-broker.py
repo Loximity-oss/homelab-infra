@@ -121,6 +121,13 @@ class ReadClass(unittest.TestCase):
     def test_missing(self):
         self.assertIsNone(mb.read_class(self.plans, SHA))
 
+    def test_apps_prefix_is_separate(self):
+        self.put(SHA, "A")                                   # an infra class never counts for apps, and back
+        self.assertIsNone(mb.read_class(self.plans, SHA, "apps-"))
+        self.put("apps-" + OLD, "B")
+        self.assertEqual(mb.read_class(self.plans, OLD, "apps-"), "B")
+        self.assertIsNone(mb.read_class(self.plans, OLD))
+
     def test_bad_sha_no_traversal(self):
         self.put(SHA, "A")
         for s in ("../" + SHA, SHA[:39], SHA.upper(), "", SHA + "/"):
@@ -169,7 +176,7 @@ class Run(unittest.TestCase):
                     return None
             orig, mb.Gitea = mb.Gitea, Fake
             try:
-                mb.run(REPO, plans, "t", dry=False)
+                mb.run(REPO, plans, "", "t", dry=False)
             finally:
                 mb.Gitea = orig
             merged = [(p, b["head_commit_id"]) for m, p, b in calls if m == "POST" and p.endswith("/merge")]

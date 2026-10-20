@@ -11,7 +11,6 @@ id runner >/dev/null
 sudo -u runner test -r /etc/openbao/ci-plan/secret_id || { echo "runner cannot read /etc/openbao/ci-plan"; exit 1; }
 install -o root -g root -m 0755 merge-broker /usr/local/sbin/merge-broker
 install -o root -g root -m 0644 merge-broker.service merge-broker.timer /etc/systemd/system/
-install -d -o runner -g runner -m 0750 /var/lib/devops/apps-plans    # apps ci-pr.sh writes <sha>/class.json here
 systemctl daemon-reload
 echo "== dry run"
 systemd-run --quiet --wait --pipe -p User=runner -p Group=runner -p StateDirectory=merge-broker \
