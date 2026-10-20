@@ -19,7 +19,7 @@ Class comes only from `<plans>/<sha>/class.json` (main's `ci-pr.sh` + main's cla
 | `merge-broker.{service,timer}` | `/etc/systemd/system/`, every 2 min |
 
 Install / update: `bash install.sh` (root, CT 300); first time `bash install.sh --dry-run-only`.
-Log: `journalctl -t merge-broker`. `systemctl start merge-broker` runs it for real; for a dry run use the `systemd-run` line in `install.sh`.
+Log: `journalctl -u merge-broker`. `systemctl start merge-broker` runs it for real; for a dry run use the `systemd-run` line in `install.sh`.
 Tests: `python3 scripts/tests/test-merge-broker.py`.
 Prerequisite for soundness in infra: #126 (agents must not write `.gitea/*`; a PR-branch workflow on `host-plan`
 runs as `runner` and could forge `class.json`).

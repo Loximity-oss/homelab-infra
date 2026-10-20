@@ -8,7 +8,6 @@ loader = importlib.machinery.SourceFileLoader("merge_broker", str(SRC))
 spec = importlib.util.spec_from_loader("merge_broker", loader)
 mb = importlib.util.module_from_spec(spec)
 loader.exec_module(mb)
-mb.syslog.syslog = lambda *a: None   # tests never write to the journal
 
 SHA, OLD = "a" * 40, "b" * 40
 REPO = "homelab/homelab-infra"
@@ -61,6 +60,11 @@ class Decide(unittest.TestCase):
         self.assertFalse(self.d("C", [rv("faris", "APPROVED", commit=OLD)]))
         self.assertFalse(self.d("C", [rv("faris", "APPROVED", stale=True)]))
         self.assertFalse(self.d("C", [rv("faris", "APPROVED", dismissed=True)]))
+
+    def test_sole_approver_is_author(self):
+        merge, why = mb.decide(pr(author="faris"), "C", True, [])
+        self.assertFalse(merge)
+        self.assertIn("only faris merges it", why)
 
     def test_author_cannot_approve_own(self):
         self.assertFalse(self.d("B", [rv("oc-rev", "APPROVED")], p=pr(author="oc-rev")))
