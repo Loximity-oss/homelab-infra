@@ -8,7 +8,7 @@ tokens, `$PLANS` or other runners' files.
 | File | Installed to |
 |---|---|
 | `apps-play-run` | `/usr/local/sbin/apps-play-run` (root, 0755) |
-| `apps-play-run.sudoers` | `/etc/sudoers.d/apps-play-run` (0440): `runner-apps` → `apps-play-run [0-9]*` only |
+| `apps-play-run.sudoers` | `/etc/sudoers.d/apps-play-run` (0440): `runner-apps` → `apps-play-run` only (sudo-rs: no argument wildcards; the wrapper checks the argument) |
 | `apps-janitor` + `.service`/`.timer` | `/usr/local/sbin/`, `/etc/systemd/system/` (every 10 min) |
 | `devops-apps.tmpfiles` | `/etc/tmpfiles.d/devops-apps.conf` (`/run/devops/apps` 0750 runner-apps:runner-apps-play) |
 | `requirements-ansible-apps.txt` | venv `/opt/ansible-apps/venv` (ansible-core 2.19.9, `--require-hashes`, root-owned) |
