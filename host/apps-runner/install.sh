@@ -28,7 +28,7 @@ grep -v '^#' collections.txt | while read -r name ver sum; do
   t=$(mktemp -d); f="$t/${name/./-}-$ver.tar.gz"
   curl -sfL -o "$f" "https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/${name/./-}-$ver.tar.gz"
   echo "$sum  $f" | sha256sum -c --quiet
-  $V/bin/ansible-galaxy collection install -q --no-deps --force -p $C "$f"
+  $V/bin/ansible-galaxy collection install --no-deps --force -p $C "$f" >/dev/null
   rm -rf "$t"; echo "  $name $ver installed"
 done
 chown -R root:root $C; chmod -R go-w,a+rX $C
