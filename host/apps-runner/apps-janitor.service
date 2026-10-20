@@ -1,0 +1,5 @@
+[Unit]
+Description=homelab-apps janitor (stale run dirs, orphan agents, host lock files)
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/apps-janitor

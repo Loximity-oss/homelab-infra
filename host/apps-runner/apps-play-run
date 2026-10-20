@@ -1,0 +1,220 @@
+#!/usr/bin/python3 -I
+"""apps-play-run — root wrapper on hm1-shr-cicd01 (CT 300) that runs ONE homelab-apps app play as runner-apps-play.
+
+Proposal: docs/proposals/homelab-apps/5b-security.md (privilege separation); migration step 4 (#127). Class C.
+Called only as `sudo /usr/local/sbin/apps-play-run <run-id>` by runner-apps (sudoers: this command, nothing else).
+The run dir /run/devops/apps/<run-id>/ is prepared by apps ci-deploy.sh (as runner-apps); its layout is the contract in
+host/apps-runner/README.md. Every check fails closed (exit 2, nothing started):
+  - exactly one argument, ^[0-9]{1,30}$ (sudoers' [0-9]* alone would also match "1 --extra")
+  - run dir, src/, src/apps, src/infra: real directories (no symlink), owner runner-apps; run dir 0750 runner-apps-play
+  - token, env, hosts, inventory.yml: regular files owned by runner-apps, opened with O_NOFOLLOW and checked with fstat
+  - agent.sock: a real socket owned by runner-apps; src/ trees: no symlinks, nothing group/other-writable
+  - env is parsed (never sourced or eval'd) against an exact key allow-list with value patterns; LD_*, PYTHON*,
+    ANSIBLE_CONFIG, plugin/library paths and every unknown key are refused; path-like values are set here, not read
+  - each hosts entry matches the hostname pattern and has a guest spec in src/infra; it becomes --limit
+Then a transient unit apps-play-<run-id> runs playbooks/deploy.yml from src/apps with the pinned venv, as
+runner-apps-play, sandboxed (systemd-run properties below), at most APPS_TIMEOUT seconds. Its journal is printed
+afterwards and its result is the exit code. The child never outlives this call (--wait, RuntimeMaxSec).
+"""
+import os, re, stat, subprocess, sys, pwd, grp
+
+RUN_ROOT = "/run/devops/apps"
+OWNER, PLAY = "runner-apps", "runner-apps-play"
+VENV = "/opt/ansible-apps/venv"
+COLLECTIONS = "/opt/ansible-apps/collections"
+PLAY_HOME = "/var/lib/runner-apps-play"
+CA = "/etc/ssl/devops/openbao-ca.crt"
+BAO_ADDR = "https://192.168.70.12:8200"
+MAX_TIMEOUT = 14400
+HOST_RE = re.compile(r"^hm1-(dmz|shr|int|stg|wifi|iot)-[a-z][a-z0-9]*[0-9]{2}$")
+# Keys the env file may carry. Values must match fully. Keys whose value is fixed here may appear only with that value.
+ALLOW = {
+    "APPS_APP": r"[a-z][a-z0-9]*(-[a-z0-9]+)*",            # catalogue entry name (lint: <= 30 chars)
+    "APPS_MODE": r"check|apply",
+    "APPS_TIMEOUT": r"[0-9]{2,5}",
+    "APPS_WAVE": r"[0-9]{1,2}",
+    "BAO_ZONE_MODE": r"namespace|mount",
+    "ANSIBLE_FORCE_COLOR": r"0|1|true|false",
+    "ANSIBLE_FORKS": r"[0-9]{1,2}",
+    "ANSIBLE_STDOUT_CALLBACK": r"default|minimal|oneline",
+}
+FIXED = {"BAO_ADDR": BAO_ADDR, "VAULT_ADDR": BAO_ADDR, "BAO_CACERT": CA, "VAULT_CACERT": CA}   # + per run: see below
+
+
+def die(msg):
+    print(f"apps-play-run: refused: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def uid(name):
+    return pwd.getpwnam(name).pw_uid
+
+
+def check_dir(path, mode=None, gid=None):
+    try:
+        st = os.lstat(path)
+    except OSError:
+        die(f"{path} missing")
+    if not stat.S_ISDIR(st.st_mode):
+        die(f"{path} is not a real directory")
+    if st.st_uid != uid(OWNER):
+        die(f"{path} not owned by {OWNER}")
+    if mode is not None and stat.S_IMODE(st.st_mode) != mode:
+        die(f"{path} mode {oct(stat.S_IMODE(st.st_mode))}, want {oct(mode)}")
+    if gid is not None and st.st_gid != gid:
+        die(f"{path} group is not {PLAY}")
+    return st
+
+
+def read_file(path, max_bytes=1 << 20):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    except OSError as e:
+        die(f"{path}: {e.strerror}")
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            die(f"{path} is not a regular file")
+        if st.st_uid != uid(OWNER):
+            die(f"{path} not owned by {OWNER}")
+        if stat.S_IMODE(st.st_mode) & 0o022:
+            die(f"{path} is group/other-writable")
+        data = os.read(fd, max_bytes + 1)
+        if len(data) > max_bytes:
+            die(f"{path} too large")
+        return data.decode("utf-8", "strict")
+    finally:
+        os.close(fd)
+
+
+def check_tree(top):
+    """No symlinks, nothing group/other-writable, everything owned by runner-apps, one filesystem."""
+    dev = os.lstat(top).st_dev
+    for dirpath, dirnames, filenames in os.walk(top, followlinks=False):
+        for n in dirnames + filenames:
+            p = os.path.join(dirpath, n)
+            st = os.lstat(p)
+            if stat.S_ISLNK(st.st_mode):
+                die(f"symlink in source tree: {p}")
+            if not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
+                die(f"special file in source tree: {p}")
+            if st.st_uid != uid(OWNER) or stat.S_IMODE(st.st_mode) & 0o022 or st.st_dev != dev:
+                die(f"bad owner/mode/filesystem: {p}")
+
+
+def spec_hosts(infra):
+    out = set()
+    stacks = os.path.join(infra, "terraform", "stacks")
+    for site in sorted(os.listdir(stacks)):
+        for zone in sorted(os.listdir(os.path.join(stacks, site))):
+            g = os.path.join(stacks, site, zone, "guests")
+            if os.path.isdir(g):
+                out |= {f[:-5] for f in os.listdir(g) if f.endswith(".yaml")}
+    return out
+
+
+def main():
+    if len(sys.argv) != 2 or not re.fullmatch(r"[0-9]{1,30}", sys.argv[1]):
+        die("usage: apps-play-run <run-id> (digits only, one argument)")
+    rid = sys.argv[1]
+    unit = f"apps-play-{rid}"
+    rd = os.path.join(RUN_ROOT, rid)
+    play_gid = grp.getgrnam(PLAY).gr_gid
+
+    check_dir(RUN_ROOT, 0o750, play_gid)
+    check_dir(rd, 0o750, play_gid)
+    for d in ("src", "src/apps", "src/infra"):
+        check_dir(os.path.join(rd, d))
+    check_tree(os.path.join(rd, "src"))
+
+    sock = os.path.join(rd, "agent.sock")
+    try:
+        st = os.lstat(sock)
+    except OSError:
+        die("agent.sock missing")
+    if not stat.S_ISSOCK(st.st_mode) or st.st_uid != uid(OWNER):
+        die("agent.sock is not a socket owned by runner-apps")
+
+    read_file(os.path.join(rd, "token"), 4096)            # checked here, read by the play (bao_create_secret)
+    read_file(os.path.join(rd, "inventory.yml"))
+    env = {}
+    for n, line in enumerate(read_file(os.path.join(rd, "env"), 8192).splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        k, sep, v = line.partition("=")
+        if not sep or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", k) or k in env:
+            die(f"env line {n}: not KEY=VALUE or duplicate key")
+        if k in FIXED or k in ("SSH_AUTH_SOCK", "APPS_BAO_TOKEN_FILE"):
+            want = FIXED.get(k) or (sock if k == "SSH_AUTH_SOCK" else os.path.join(rd, "token"))
+            if v != want:
+                die(f"env {k}: only {want} is allowed")
+            continue
+        if k not in ALLOW or not re.fullmatch(ALLOW[k], v):
+            die(f"env key {k} not allowed or bad value")
+        env[k] = v
+    for k in ("APPS_APP", "APPS_MODE"):
+        if k not in env:
+            die(f"env {k} missing")
+    if len(env["APPS_APP"]) > 30:
+        die("APPS_APP longer than 30")
+    timeout = int(env.get("APPS_TIMEOUT", "3600"))
+    if not 60 <= timeout <= MAX_TIMEOUT:
+        die(f"APPS_TIMEOUT must be 60..{MAX_TIMEOUT}")
+
+    known = spec_hosts(os.path.join(rd, "src", "infra"))
+    hosts = [h.strip() for h in read_file(os.path.join(rd, "hosts"), 65536).splitlines() if h.strip()]
+    if not hosts:
+        die("hosts file is empty")
+    for h in hosts:
+        if not HOST_RE.fullmatch(h) or h not in known:
+            die(f"host {h!r}: bad name or no guest spec in src/infra")
+    if len(set(hosts)) != len(hosts):
+        die("duplicate host")
+
+    if subprocess.run(["systemctl", "is-active", "--quiet", f"{unit}.service"]).returncode == 0:
+        die(f"{unit} is already running")
+
+    setenv = dict(env)
+    setenv.update({
+        "HOME": PLAY_HOME, "TMPDIR": f"{PLAY_HOME}/tmp", "PATH": f"{VENV}/bin:/usr/bin:/bin",
+        "LANG": "C.UTF-8", "SSH_AUTH_SOCK": sock, "APPS_BAO_TOKEN_FILE": os.path.join(rd, "token"),
+        "BAO_ADDR": BAO_ADDR, "BAO_CACERT": CA,
+        "ANSIBLE_HOME": f"{PLAY_HOME}/.ansible", "ANSIBLE_LOCAL_TEMP": f"{PLAY_HOME}/ansible-local",
+        "ANSIBLE_SSH_CONTROL_PATH_DIR": f"{PLAY_HOME}/ansible-cp", "ANSIBLE_COLLECTIONS_PATH": COLLECTIONS,
+        "ANSIBLE_RETRY_FILES_ENABLED": "false", "ANSIBLE_CONFIG": os.path.join(rd, "src", "apps", "ansible.cfg"),
+    })
+    props = [
+        f"User={PLAY}", f"Group={PLAY}", "SupplementaryGroups=", "UMask=0077",
+        f"WorkingDirectory={rd}/src/apps", f"RuntimeMaxSec={timeout}",
+        "NoNewPrivileges=yes", "PrivateTmp=yes", "ProtectHome=yes", "ProtectSystem=strict",
+        f"ReadWritePaths={rd} {PLAY_HOME}", "CapabilityBoundingSet=", "AmbientCapabilities=",
+        "RestrictSUIDSGID=yes", "ProtectProc=invisible", "PrivateDevices=yes", "ProtectKernelTunables=yes",
+        "ProtectKernelModules=yes", "ProtectControlGroups=yes", "LockPersonality=yes", "RestrictRealtime=yes",
+        "InaccessiblePaths=/etc/openbao -/var/lib/devops -/etc/act_runner -/etc/act_runner-apply "
+        "-/etc/act_runner-template -/etc/act_runner-apps -/var/lib/act_runner -/var/lib/act_runner-apply "
+        "-/var/lib/act_runner-template -/var/lib/act_runner-apps -/var/lib/gitea -/etc/gitea -/etc/sudoers.d",
+    ]
+    cmd = [f"{VENV}/bin/ansible-playbook", "-i", os.path.join(rd, "inventory.yml"), "--limit", ",".join(hosts),
+           "-e", f"apps_run_app={env['APPS_APP']}"]
+    if env["APPS_MODE"] == "check":
+        cmd += ["--check", "--diff"]
+    cmd.append(os.path.join(rd, "src", "apps", "playbooks", "deploy.yml"))
+
+    run = ["systemd-run", f"--unit={unit}", "--service-type=exec", "--collect", "--wait", "--quiet",
+           "--description=homelab-apps app play (apps-play-run)"]
+    for p in props:
+        run += ["-p", p]
+    for k, v in sorted(setenv.items()):
+        run.append(f"--setenv={k}={v}")
+    run += ["--", *cmd]
+    print(f"apps-play-run: {unit} app={env['APPS_APP']} mode={env['APPS_MODE']} hosts={','.join(hosts)} "
+          f"timeout={timeout}s", flush=True)
+    rc = subprocess.run(run, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}).returncode
+    subprocess.run(["journalctl", "--no-pager", "-o", "cat", f"_SYSTEMD_UNIT={unit}.service"])
+    print(f"apps-play-run: {unit} finished rc={rc}", flush=True)
+    sys.exit(rc)
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    main()
