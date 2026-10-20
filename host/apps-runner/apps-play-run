@@ -5,7 +5,7 @@ Proposal: docs/proposals/homelab-apps/5b-security.md (privilege separation); mig
 Called only as `sudo /usr/local/sbin/apps-play-run <run-id>` by runner-apps (sudoers: this command, nothing else).
 The run dir /run/devops/apps/<run-id>/ is prepared by apps ci-deploy.sh (as runner-apps); its layout is the contract in
 host/apps-runner/README.md. Every check fails closed (exit 2, nothing started):
-  - exactly one argument, ^[0-9]{1,30}$ (sudoers' [0-9]* alone would also match "1 --extra")
+  - exactly one argument, ^[0-9]{1,30}$ (the sudoers rule allows any arguments: sudo-rs has no wildcards)
   - run dir, src/, src/apps, src/infra: real directories (no symlink), owner runner-apps; run dir 0750 runner-apps-play
   - token, env, hosts, inventory.yml: regular files owned by runner-apps, opened with O_NOFOLLOW and checked with fstat
   - agent.sock: a real socket owned by runner-apps; src/ trees: no symlinks, nothing group/other-writable
@@ -217,4 +217,6 @@ def main():
 
 if __name__ == "__main__":
     os.umask(0o077)
+    os.environ.clear()                                  # never trust the caller's environment (sudo-rs resets it too)
+    os.environ.update({"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"})
     main()
