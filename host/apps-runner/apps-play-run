@@ -6,9 +6,12 @@ Called only as `sudo /usr/local/sbin/apps-play-run <run-id>` by runner-apps (sud
 The run dir /run/devops/apps/<run-id>/ is prepared by apps ci-deploy.sh (as runner-apps); its layout is the contract in
 host/apps-runner/README.md. Every check fails closed (exit 2, nothing started):
   - exactly one argument, ^[0-9]{1,30}$ (the sudoers rule allows any arguments: sudo-rs has no wildcards)
-  - run dir, src/, src/apps, src/infra: real directories (no symlink), owner runner-apps; run dir 0750 runner-apps-play
-  - token, env, hosts, inventory.yml: regular files owned by runner-apps, opened with O_NOFOLLOW and checked with fstat
-  - agent.sock: a real socket owned by runner-apps; src/ trees: no symlinks, nothing group/other-writable
+  - run dir: real directory, owner runner-apps, group runner-apps-play, mode 2750 (setgid: everything created inside
+    inherits the group); src/, src/apps, src/infra: real directories, same owner and group
+  - token, env, hosts, inventory.yml: regular files owned by runner-apps, opened with O_NOFOLLOW and checked with fstat;
+    token and inventory.yml (read by the play) must be group runner-apps-play and group-readable
+  - agent.sock: a real socket owned by runner-apps; src/ trees: no symlinks, nothing group/other-writable, every
+    entry group runner-apps-play and group-readable (dirs also group-searchable)
   - env is parsed (never sourced or eval'd) against an exact key allow-list with value patterns; LD_*, PYTHON*,
     ANSIBLE_CONFIG, plugin/library paths and every unknown key are refused; path-like values are set here, not read
   - each hosts entry matches the hostname pattern and has a guest spec in src/infra; it becomes --limit
@@ -66,7 +69,7 @@ def check_dir(path, mode=None, gid=None):
     return st
 
 
-def read_file(path, max_bytes=1 << 20):
+def read_file(path, max_bytes=1 << 20, play_gid=None):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
     except OSError as e:
@@ -79,6 +82,8 @@ def read_file(path, max_bytes=1 << 20):
             die(f"{path} not owned by {OWNER}")
         if stat.S_IMODE(st.st_mode) & 0o022:
             die(f"{path} is group/other-writable")
+        if play_gid is not None and (st.st_gid != play_gid or not st.st_mode & stat.S_IRGRP):
+            die(f"{path} must be group {PLAY} and group-readable (the play reads it)")
         data = os.read(fd, max_bytes + 1)
         if len(data) > max_bytes:
             die(f"{path} too large")
@@ -87,8 +92,8 @@ def read_file(path, max_bytes=1 << 20):
         os.close(fd)
 
 
-def check_tree(top):
-    """No symlinks, nothing group/other-writable, everything owned by runner-apps, one filesystem."""
+def check_tree(top, play_gid):
+    """No symlinks, nothing group/other-writable, owner runner-apps, group runner-apps-play and readable, one fs."""
     dev = os.lstat(top).st_dev
     for dirpath, dirnames, filenames in os.walk(top, followlinks=False):
         for n in dirnames + filenames:
@@ -100,6 +105,9 @@ def check_tree(top):
                 die(f"special file in source tree: {p}")
             if st.st_uid != uid(OWNER) or stat.S_IMODE(st.st_mode) & 0o022 or st.st_dev != dev:
                 die(f"bad owner/mode/filesystem: {p}")
+            need = stat.S_IRGRP | (stat.S_IXGRP if stat.S_ISDIR(st.st_mode) else 0)
+            if st.st_gid != play_gid or st.st_mode & need != need:
+                die(f"not group {PLAY} or not group-readable: {p}")
 
 
 def spec_hosts(infra):
@@ -122,10 +130,10 @@ def main():
     play_gid = grp.getgrnam(PLAY).gr_gid
 
     check_dir(RUN_ROOT, 0o750, play_gid)
-    check_dir(rd, 0o750, play_gid)
+    check_dir(rd, 0o2750, play_gid)
     for d in ("src", "src/apps", "src/infra"):
-        check_dir(os.path.join(rd, d))
-    check_tree(os.path.join(rd, "src"))
+        check_dir(os.path.join(rd, d), gid=play_gid)
+    check_tree(os.path.join(rd, "src"), play_gid)
 
     sock = os.path.join(rd, "agent.sock")
     try:
@@ -135,8 +143,8 @@ def main():
     if not stat.S_ISSOCK(st.st_mode) or st.st_uid != uid(OWNER):
         die("agent.sock is not a socket owned by runner-apps")
 
-    read_file(os.path.join(rd, "token"), 4096)            # checked here, read by the play (bao_create_secret)
-    read_file(os.path.join(rd, "inventory.yml"))
+    read_file(os.path.join(rd, "token"), 4096, play_gid)  # checked here, read by the play (bao_create_secret)
+    read_file(os.path.join(rd, "inventory.yml"), play_gid=play_gid)
     env = {}
     for n, line in enumerate(read_file(os.path.join(rd, "env"), 8192).splitlines(), 1):
         if not line.strip() or line.lstrip().startswith("#"):
