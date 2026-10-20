@@ -5,6 +5,7 @@
 #   bash install.sh                      # everything except runner registration
 #   bash install.sh --register < token   # also registers the runner (Gitea repo registration token on stdin)
 set -euo pipefail
+export LANG=C.UTF-8 LC_ALL=C.UTF-8          # ansible refuses to start without a UTF-8 locale (pct exec has none)
 cd "$(dirname "$0")"
 [ "$(id -u)" = 0 ] && [ "$(hostname)" = hm1-shr-cicd01 ] || { echo "run as root on hm1-shr-cicd01"; exit 1; }
 for u in runner-apps runner-apps-play; do id "$u" >/dev/null; done
