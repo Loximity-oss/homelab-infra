@@ -15,11 +15,16 @@ host/apps-runner/README.md. Every check fails closed (exit 2, nothing started):
   - env is parsed (never sourced or eval'd) against an exact key allow-list with value patterns; LD_*, PYTHON*,
     ANSIBLE_CONFIG, plugin/library paths and every unknown key are refused; path-like values are set here, not read
   - each hosts entry matches the hostname pattern and has a guest spec in src/infra; it becomes --limit
+SSH agent: ssh-agent refuses clients whose uid is not its own (root excepted), so the play (runner-apps-play) cannot
+use runner-apps's agent directly (deploy run 598: publickey denied). This wrapper relays instead: it pins agent.sock
+with an O_PATH fd after the checks (a swapped path is never followed), listens on play-agent.sock (root:runner-apps-play
+0660) and, for each client whose SO_PEERCRED uid is runner-apps-play, connects to the pinned agent as root and copies
+bytes both ways. The key stays in runner-apps's agent; the play can only ask it to sign, as before.
 Then a transient unit apps-play-<run-id> runs playbooks/deploy.yml from src/apps with the pinned venv, as
 runner-apps-play, sandboxed (systemd-run properties below), at most APPS_TIMEOUT seconds. Its journal is printed
 afterwards and its result is the exit code. The child never outlives this call (--wait, RuntimeMaxSec).
 """
-import os, re, stat, subprocess, sys, pwd, grp
+import os, re, socket, stat, struct, subprocess, sys, pwd, grp, threading
 
 RUN_ROOT = "/run/devops/apps"
 OWNER, PLAY = "runner-apps", "runner-apps-play"
@@ -67,6 +72,70 @@ def check_dir(path, mode=None, gid=None):
     if gid is not None and st.st_gid != gid:
         die(f"{path} group is not {PLAY}")
     return st
+
+
+def _pipe(src, dst):
+    try:
+        while True:
+            data = src.recv(65536)
+            if not data:
+                break
+            dst.sendall(data)
+    except OSError:
+        pass
+    finally:
+        for s in (src, dst):
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
+def agent_relay(rd, sock, play_uid, play_gid):
+    """-> listening path. Relay play clients to the agent at `sock` (already checked: socket owned by runner-apps)."""
+    try:
+        pin = os.open(sock, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as e:
+        die(f"agent.sock: {e.strerror}")
+    st = os.fstat(pin)
+    if not stat.S_ISSOCK(st.st_mode) or st.st_uid != uid(OWNER):
+        die("agent.sock is not a socket owned by runner-apps")
+    target = f"/proc/self/fd/{pin}"                     # always the inode checked above, whatever the path is now
+    path = os.path.join(rd, "play-agent.sock")
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        old = os.umask(0o117)                           # created 0660: no chmod by path (rd belongs to runner-apps)
+        try:
+            srv.bind(path)                              # fails if anything already has this name: refused
+        finally:
+            os.umask(old)
+        os.chown(path, 0, play_gid, follow_symlinks=False)
+        srv.listen(8)
+    except OSError as e:
+        die(f"play-agent.sock: {e.strerror}")
+
+    def serve():
+        while True:
+            try:
+                client, _ = srv.accept()
+            except OSError:
+                return
+            _pid, cuid, _gid = struct.unpack("3i", client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if cuid != play_uid:
+                client.close()
+                continue
+            upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                upstream.connect(target)
+            except OSError:
+                client.close()
+                upstream.close()
+                continue
+            threading.Thread(target=_pipe, args=(client, upstream), daemon=True).start()
+            threading.Thread(target=_pipe, args=(upstream, client), daemon=True).start()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return path
 
 
 def read_file(path, max_bytes=1 << 20, play_gid=None):
@@ -182,10 +251,12 @@ def main():
     if subprocess.run(["systemctl", "is-active", "--quiet", f"{unit}.service"]).returncode == 0:
         die(f"{unit} is already running")
 
+    relay = agent_relay(rd, sock, uid(PLAY), play_gid)
+
     setenv = dict(env)
     setenv.update({
         "HOME": PLAY_HOME, "TMPDIR": f"{PLAY_HOME}/tmp", "PATH": f"{VENV}/bin:/usr/bin:/bin",
-        "LANG": "C.UTF-8", "SSH_AUTH_SOCK": sock, "APPS_BAO_TOKEN_FILE": os.path.join(rd, "token"),
+        "LANG": "C.UTF-8", "SSH_AUTH_SOCK": relay, "APPS_BAO_TOKEN_FILE": os.path.join(rd, "token"),
         "BAO_ADDR": BAO_ADDR, "BAO_CACERT": CA,
         "ANSIBLE_HOME": f"{PLAY_HOME}/.ansible", "ANSIBLE_LOCAL_TEMP": f"{PLAY_HOME}/ansible-local",
         "ANSIBLE_SSH_CONTROL_PATH_DIR": f"{PLAY_HOME}/ansible-cp", "ANSIBLE_COLLECTIONS_PATH": COLLECTIONS,
@@ -218,6 +289,10 @@ def main():
     print(f"apps-play-run: {unit} app={env['APPS_APP']} mode={env['APPS_MODE']} hosts={','.join(hosts)} "
           f"timeout={timeout}s", flush=True)
     rc = subprocess.run(run, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}).returncode
+    try:
+        os.unlink(relay)
+    except OSError:
+        pass
     subprocess.run(["journalctl", "--no-pager", "-o", "cat", f"_SYSTEMD_UNIT={unit}.service"])
     print(f"apps-play-run: {unit} finished rc={rc}", flush=True)
     sys.exit(rc)
