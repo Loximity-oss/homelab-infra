@@ -14,6 +14,7 @@ jobs:
           SERVER: ${{ gitea.server_url }}
           REPO: ${{ gitea.repository }}
           SHA: ${{ gitea.sha }}
+          APPS_DISPATCH: "1" # cutover step 10(d), infra #127: dispatch homelab-apps deploy for configured hosts
         run: |
           rm -rf base
           git clone -q "${SERVER%%://*}://ci:${GIT_TOKEN}@${SERVER#*://}/${REPO}.git" base
