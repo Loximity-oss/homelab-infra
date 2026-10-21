@@ -99,7 +99,7 @@ def selftest():
             {"host": c, "status": "pass"}, {"host": s, "status": "pass"}, {"host": "platform", "status": "pass"}]
     dep, specs = {a, b, c}, {a, b, c, s}
     cases = [
-        (select(dep, rows, [a, b, c, s], [], specs), [a, c], "failed row and non-deployment host dropped"),
+        (select(dep, rows, [a, b, c, s], [], specs), sorted([a, c]), "failed row and non-deployment host dropped"),
         (select(dep, rows, [a, b, c, s], [c], specs), [a], "rolled-back host dropped"),
         (select(dep, rows, [b], [], specs), [], "only a failed host"),
         (select(dep, [], [a], [], specs), [], "no verify rows = nothing"),
