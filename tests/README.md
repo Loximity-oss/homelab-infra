@@ -7,7 +7,7 @@ Every guest the pipeline creates or changes is verified after apply; destroyed g
 | L1 Platform | Proxmox API: guest matches its spec and zone | `scripts/verify.py` (runner) |
 | L2 Reachability | ping, SSH, host key, hostname | `scripts/verify.py` (runner) |
 | L3 OS baseline | Goss on the guest | `tests/os/<family>.goss.yaml.j2` via `ansible/roles/verify` |
-| L4 App checks | Goss on the guest, only for roles that have a file | `tests/apps/<role>.goss.yaml.j2` via `ansible/roles/verify` |
+| L4 App checks | moved to **homelab-apps** (migration step 10(c), infra #127) | `catalog/<app>/tests/l4.goss.yaml.j2`, run by apps `verify` (03:15) and after each deploy wave |
 
 Run by hand (apply runner, plan token for L1):
 `PROXMOX_VE_API_TOKEN=... scripts/verify.py --standards <dir> --hosts <h1,h2> --out <dir>` → `verify.md` + `verify.json`.
@@ -18,10 +18,6 @@ Scope today: Ubuntu LXC + VM, Arch VM (`tests/os/arch.goss.yaml.j2`; btrfs root:
 
 ## L4 app checks
 
-Optional layer keyed by the spec `role` code: `tests/apps/<role>.goss.yaml.j2`. Only guests whose role has a file get L4 rows; verify output for every other guest is unchanged.
-- `ansible/roles/verify` renders the file to `/etc/hm1/goss/app.yaml` after the L3 result is written and runs Goss in a **separate run**, with its own result file `<host>.l4.json`. An app failure (or a render error) can neither hide nor break the L3 baseline result.
-- A missing, unreadable or error result is a **failure** ("no result"), never a pass.
-- Evidence: Goss can't show a command's output, so for a failed L4 command `scripts/verify.py` re-runs it over SSH from the rendered copy on the runner (`<host>.l4.yaml`) and shows its output (e.g. the drifted key paths). Every L4 command must therefore stay read-only.
-- Read-only, no credentials, loopback only.
-- Values come from `ansible/playbooks/group_vars/role_<role>.yml` (loaded by the verify play). Role defaults that the verify play does not load are written as `app_x | default(<same literal>)`; keep them in sync with the role.
-- Current file: `dns` = AdGuard Home (service, listeners, web UI, a DNS query, filter files, config drift).
+Moved to homelab-apps at cutover (migration step 10(c), infra #127): each catalogue entry has
+`catalog/<app>/tests/l4.goss.yaml.j2`, run by `playbooks/verify.yml` through the apps runner (nightly 03:15, after each
+apply wave, on dispatch). Failures open `app-verify: <app>/<host>` issues there. This repo's verify is L1-L3 only.
