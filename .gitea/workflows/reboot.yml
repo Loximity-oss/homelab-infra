@@ -1,0 +1,31 @@
+name: reboot
+# One approved reboot of one patched guest (docs/proposals/homelab-apps/3-patching.md 3.4, migration step 9, infra #151).
+# Dispatched by OpenClaw reboot_guest(issue) after Faris answered `reboot` on a 'patch: reboot <host>' issue.
+# scripts/ci-reboot.sh is the authority and re-checks everything in code (newest faris comment, no later pipeline
+# marker, spec, protected/template, open app-verify issues), so a dispatch alone reboots nothing. Runs on the apply
+# runner (guest SSH key, apply token for the snapshot and the Proxmox reboot). Host locks (whole deployment for
+# pair/drain) keep it apart from apply, patch and the apps deploy; no other lock is needed.
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "number of the open 'patch: reboot <host>' issue Faris answered with 'reboot'"
+        required: true
+jobs:
+  reboot:
+    if: gitea.ref == 'refs/heads/main'
+    runs-on: host-apply
+    timeout-minutes: 240 # > host lock wait (60 min) + drain/reboot/health (proposal 2.3)
+    steps:
+      - name: reboot one approved host
+        env:
+          GIT_TOKEN: ${{ gitea.token }}
+          SERVER: ${{ gitea.server_url }}
+          REPO: ${{ gitea.repository }}
+          SHA: ${{ gitea.sha }}
+          ISSUE: ${{ inputs.issue }}
+        run: |
+          rm -rf base
+          git clone -q --branch main "${SERVER%%://*}://ci:${GIT_TOKEN}@${SERVER#*://}/${REPO}.git" base
+          git -C base checkout -q "$SHA"
+          bash base/scripts/ci-reboot.sh
