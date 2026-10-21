@@ -6,6 +6,10 @@ bao_login ci-apply
 export GITEA_API_TOKEN; GITEA_API_TOKEN=$(secret plan gitea_ci_token)
 APPLY_TOKEN=$(secret apply pve_token_apply); PG_CONN=$(secret plan pg_conn)
 PLAN_PVE_TOKEN=$(secret plan pve_token_plan)   # read-only, for the L1 tests (decision 32)
+# homelab-apps dispatch (proposal 2.1, migration step 9): OFF until cutover step 10(d) sets APPS_DISPATCH=1 in apply.yml.
+# Off = the dispatch block below is skipped and this token is not even read. Missing key = warning, never a failure.
+APPS_DISPATCH=${APPS_DISPATCH:-0}; APPS_DISPATCH_TOKEN=""
+if [ "$APPS_DISPATCH" = "1" ]; then APPS_DISPATCH_TOKEN=$(secret apply gitea_apps_dispatch_token 2>/dev/null) || APPS_DISPATCH_TOKEN=""; fi
 bao_logout
 
 read -r PR HEAD_SHA <<<"$(python3 "$BASE/scripts/gitea.py" pr-of-commit "$SHA")" || true
@@ -84,7 +88,7 @@ if [ -n "$SNAP_HOSTS" ]; then
   fi
   SNAPPED=$(awk '$2=="ok"{print $1}' "$W/snapshot.txt" | paste -sd, -)
 fi
-FAILED=0
+FAILED=0; ANSIBLE_RC=0; RB=""   # ANSIBLE_RC / RB (stg rollbacks) feed the apps dispatch at the end
 for s in "${STACKS[@]}"; do
   n=$(stack_name "$s")
   [ -f "$OUT/$n.tfplan" ] || { note "- ❌ $n: saved plan missing"; finish 1; }
@@ -177,6 +181,7 @@ if [ -n "$HOSTS" ]; then
   bao_login ci-apply; export GUEST_SECRET_TOKEN="$BAO_TOKEN" BAO_ZONE_MODE="${BAO_ZONE_MODE:-namespace}"
   ok=0; (cd "$BASE/ansible" && INFRA_ROOT="$BASE" ansible-playbook -i ../scripts/inventory.py playbooks/site.yml --limit "$HOSTS" "${APPS_ARGS[@]}") > "$W/ansible.log" 2>&1 || ok=$?
   BAO_TOKEN="$GUEST_SECRET_TOKEN" bao_logout; unset GUEST_SECRET_TOKEN
+  ANSIBLE_RC=$ok
   if [ $ok -eq 0 ]; then
     note "- ✅ Ansible: $HOSTS — $(grep -A20 'PLAY RECAP' "$W/ansible.log" | grep -c 'failed=0') host(s) ok"
   else
@@ -234,4 +239,35 @@ PY
     fi
   fi
 fi
+# ---- homelab-apps dispatch (proposal 2.1, migration step 9). After the tests (incl. stg rollback re-test), before
+# finish(): the host locks are still held, so the apps deploy waits for them. Hosts = VHOSTS with verify rows and no
+# failed row, minus stg rollbacks, that are in a homelab-apps deployment (apps_dispatch.py). Ansible failed = nothing.
+# A dispatch problem NEVER fails the apply: a warning line + issue "pipeline: apps dispatch failed" (PM -> oc-infra).
+# APPS_DISPATCH != 1 (default until step 10(d)): nothing here runs and the report is unchanged.
+apps_dispatch_failed() {  # reason [hosts]
+  note "- ⚠️ apps dispatch failed: $1 (the apply result is unaffected)"
+  { echo "**homelab-apps dispatch failed** after the apply of PR #$PR (\`${SHA:0:8}\`): $1."; echo
+    echo "Hosts that would have been dispatched: \`${2:-not computed}\`. Once fixed, dispatch homelab-apps \`deploy\` for them."
+    echo; echo '```'; tail -5 "$W/apps-dispatch.err" 2>/dev/null | tr -d '`' || true; echo '```'; } > "$W/apps-dispatch.md"
+  python3 "$BASE/scripts/gitea.py" issue-upsert "pipeline: apps dispatch failed" pipeline "$W/apps-dispatch.md" || true
+}
+if [ "$APPS_DISPATCH" = "1" ] && [ -n "$VHOSTS" ]; then
+  : > "$W/apps-dispatch.err"
+  if [ "$ANSIBLE_RC" -ne 0 ]; then
+    note "- ⏭️ apps dispatch: none (Ansible failed)"
+  elif [ -z "$APPS_DISPATCH_TOKEN" ]; then
+    apps_dispatch_failed "no gitea_apps_dispatch_token in hm1/platform/ci/apply"
+  elif ! { [ -d "$W/apps/.git" ] || clone homelab/homelab-apps "$W/apps" "$GITEA_API_TOKEN" >/dev/null 2>"$W/apps-dispatch.err"; }; then
+    apps_dispatch_failed "homelab-apps clone failed"
+  elif ! DHOSTS=$(INFRA_ROOT="$BASE" python3 "$BASE/scripts/apps_dispatch.py" hosts "$W/apps" "$W/verify/verify.json" "$VHOSTS" "$RB" 2>"$W/apps-dispatch.err"); then
+    apps_dispatch_failed "could not read the homelab-apps deployments"
+  elif [ -z "$DHOSTS" ]; then
+    note "- apps dispatch: none (no green host of this apply is in a homelab-apps deployment)"
+  elif APPS_DISPATCH_TOKEN="$APPS_DISPATCH_TOKEN" python3 "$BASE/scripts/apps_dispatch.py" send "$DHOSTS" "$PR" >/dev/null 2>"$W/apps-dispatch.err"; then
+    note "- 🚀 homelab-apps \`deploy\` dispatched (ref main) for: $DHOSTS (it waits for these host locks)"
+  else
+    apps_dispatch_failed "dispatch API call failed" "$DHOSTS"
+  fi
+fi
+unset APPS_DISPATCH_TOKEN
 [ $FAILED -eq 0 ] && finish 0 || finish 1
