@@ -88,14 +88,14 @@
   changed_when: false
   failed_when: false
 
-- name: Verify services (L3/L4 baseline and app checks, same role as the nightly verify)
+- name: Verify services (L3 OS baseline, same role as the nightly verify)
   ansible.builtin.include_role:
     name: verify
   vars:
     verify_out: "{{ patch_apply_out }}"
 
 # Catalogue health (infra #127 step 9, proposal homelab-apps/3-patching.md 3.2): patch_apps_health is passed by
-# scripts/ci-patch.sh (-e @apps-health.json). Undefined or no entry for this host -> empty loop (built-in verify stays).
+# scripts/ci-patch.sh (-e @apps-health.json). Undefined or no entry for this host -> empty loop. App checks (DNS, k3s) live only here, in the catalogue.
 - name: App health from the homelab-apps catalogue (proposal 3.2)
   ansible.builtin.shell: "{{ item.script }}"
   args:

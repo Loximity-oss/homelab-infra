@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Guest deployment tests (design-v7 decision 32): L1 platform, L2 reachability, L3 OS baseline (Goss via Ansible),
-L4 app checks (Goss, only for roles with tests/apps/<role>.goss.yaml.j2) and the "gone" check for destroyed guests.
-Read-only except L3/L4 copying Goss + the rendered test files to the guest.
+"""Guest deployment tests (design-v7 decision 32): L1 platform, L2 reachability, L3 OS baseline (Goss via Ansible)
+and the "gone" check for destroyed guests. App checks (L4) moved to homelab-apps (infra #127 step 10c).
+Read-only except L3 copying Goss + the rendered test file to the guest.
 
 Usage: verify.py --standards DIR [--hosts h1,h2 | --all] [--gone host:vmid:ip,...] --out DIR [--no-l3]
-Env:   PROXMOX_VE_API_TOKEN (plan token: read-only), INFRA_ROOT (repo checkout). L2-L4 need the apply runner's SSH key.
+Env:   PROXMOX_VE_API_TOKEN (plan token: read-only), INFRA_ROOT (repo checkout). L2-L3 need the apply runner's SSH key.
 Writes DIR/verify.json and DIR/verify.md; exit 1 if any check failed (skips are reported as ⚠️, never as ✅).
---no-l3 skips the Goss layers (L3 and L4)."""
+--no-l3 skips the Goss layer (L3)."""
 import argparse, json, os, re, socket, ssl, subprocess, sys, urllib.request
 import yaml
 
@@ -142,26 +142,8 @@ def l2(rep, s):
     rep.ok(h, "L2", "hostname", r.stdout.strip() == h, r.stdout.strip() or "-")
 
 
-def app_tests(role):
-    """L4: tests/apps/<role>.goss.yaml.j2 = app checks for every guest of that role (rendered by ansible/roles/verify)."""
-    return os.path.exists(os.path.join(ROOT, "tests", "apps", f"{role}.goss.yaml.j2"))
-
-
 def host_ip(h):
     return str(next(s["ip"] for s in load_specs() if s["hostname"] == h))
-
-
-def l4_output(h, f, rid):
-    """Goss can't show a command's output. Re-run the failed L4 command from the rendered test file
-    (<host>.l4.yaml, written by ansible/roles/verify) over SSH and return its output. L4 commands are read-only by
-    contract (tests/README.md), so re-running one changes nothing. Any problem -> "" (keep Goss's summary)."""
-    try:
-        cmd = yaml.safe_load(open(f[:-len(".json")] + ".yaml"))["command"][rid]["exec"]
-        r = ssh(host_ip(h), cmd)
-        out = " ".join((r.stdout + r.stderr).split())
-        return f"output: {out}" if out else ""
-    except Exception:
-        return ""
 
 
 def goss_rows(rep, h, layer, f):
@@ -186,13 +168,11 @@ def goss_rows(rep, h, layer, f):
                 ev = "failed units: " + (ssh(host_ip(h), "systemctl list-units --state=failed --no-legend --plain | awk '{print $1}' | paste -sd' '").stdout.strip() or "?")
             except Exception:
                 pass
-        if st == "fail" and layer == "L4" and r.get("resource-type") == "Command":
-            ev = l4_output(h, f, r.get("resource-id", "")) or ev
         rep.add(h, layer, name, st, ev)
 
 
-def l3(rep, hosts, out, specs):
-    """L3 OS baseline for every host; L4 app checks for hosts whose role has tests/apps/<role>.goss.yaml.j2."""
+def l3(rep, hosts, out):
+    """L3 OS baseline for every host (<host>.l3.json). No L4: a <host>.l4.json is neither expected nor read."""
     if not hosts:
         return
     os.makedirs(out, exist_ok=True)
@@ -203,8 +183,6 @@ def l3(rep, hosts, out, specs):
     open(os.path.join(out, "verify-ansible.log"), "w").write(p.stdout + p.stderr)
     for h in hosts:
         goss_rows(rep, h, "L3", os.path.join(out, f"{h}.l3.json"))
-        if app_tests(specs[h]["role"]):
-            goss_rows(rep, h, "L4", os.path.join(out, f"{h}.l4.json"))
 
 
 def gone(rep, entries, res, spec_hosts):
@@ -263,7 +241,7 @@ def main():
     for h in sorted(set(want) - set(reach)):
         rep.add(h, "L3", "goss run", "fail", "skipped: not reachable over SSH (L2)")
     if not a.no_l3:
-        l3(rep, reach, a.out, specs)
+        l3(rep, reach, a.out)
     gone(rep, [e for e in a.gone.split(",") if e], res, set(specs))
     os.makedirs(a.out, exist_ok=True)
     json.dump({"rows": rep.rows, "failed": len(rep.failed)}, open(os.path.join(a.out, "verify.json"), "w"), indent=1)
