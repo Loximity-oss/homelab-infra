@@ -28,6 +28,30 @@
     update_cache: true
   when: ansible_os_family == 'Archlinux'
 
+- name: Check whether fwupd-refresh units exist
+  ansible.builtin.command: systemctl list-unit-files --no-legend fwupd-refresh.timer fwupd-refresh.service
+  register: base_fwupd_units
+  changed_when: false
+  failed_when: false
+
+- name: Mask fwupd-refresh timer and service (guests cannot reach the LVFS CDN)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    masked: true
+    enabled: false
+    state: stopped
+  loop:
+    - fwupd-refresh.timer
+    - fwupd-refresh.service
+  when: base_fwupd_units.stdout is search(item)
+
+- name: Clear failed state of fwupd-refresh
+  ansible.builtin.command: systemctl reset-failed fwupd-refresh.service
+  register: base_fwupd_reset
+  changed_when: false
+  failed_when: false
+  when: base_fwupd_units.stdout | length > 0
+
 - name: Set hostname to the inventory name
   ansible.builtin.hostname:
     name: "{{ inventory_hostname }}"
