@@ -3,7 +3,7 @@
 #   Monthly bundle (Sev1-4), only after Faris approved the bundle PR in Gitea:
 #                                     ansible-playbook patch.yml -e patch_max_sev=4 -e patch_snapshot=...
 # The pre-patch snapshot is taken by the pipeline (Proxmox token) BEFORE this runs; the play refuses to run without its name.
-# One host at a time, sorted: a failed service check stops the rollout after the first bad host (DNS pairs, k3s quorum).
+# One host at a time, sorted: a failed service or catalogue health check stops the rollout after the first bad host (DNS pairs, k3s quorum).
 - name: Patch ring 1
   hosts: patch_ring1
   serial: 1

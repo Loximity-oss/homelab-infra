@@ -1,4 +1,5 @@
-# Every host gets the base layer; role_* groups add their roles as they are written.
+# Every host gets the base layer. Application layers (AdGuard, k3s, ...) are deployed by homelab-apps
+# (docs/proposals/homelab-apps/); only hm1-dmz-app01 (VM 210, not migrated) keeps a play here.
 - name: Base layer
   hosts: all
   gather_facts: false
@@ -18,51 +19,3 @@
   gather_facts: false
   roles:
     - base_admin_user
-
-# Every `role: dns` guest in any zone is an AdGuard resolver (secret path and OpenBao namespace follow its zone).
-# One host at a time, sorted: a bad config or failed healthcheck stops the rollout after the first host, so at most
-# one resolver of a zone pair is restarted/broken at once.
-- name: AdGuard DNS
-  hosts: role_dns
-  serial: 1
-  order: sorted
-  any_errors_fatal: true
-  roles:
-    - app_adguard
-
-# k3s HA cluster (docs/apps/k3s.md). Control nodes first, one at a time (etcd quorum), the first sorted host runs
-# --cluster-init; any failure stops the rollout. Workers follow, also one at a time.
-- name: k3s control plane
-  hosts: role_k3sc
-  serial: 1
-  order: sorted
-  any_errors_fatal: true
-  gather_facts: false
-  vars:
-    svc_k3s_node_type: server
-  roles:
-    - svc_k3s
-
-- name: k3s workers
-  hosts: role_k3sw
-  serial: 1
-  order: sorted
-  any_errors_fatal: true
-  gather_facts: false
-  vars:
-    svc_k3s_node_type: agent
-  roles:
-    - svc_k3s
-
-# Last: escrow the join tokens in OpenBao (create-only, once, first control node only). Separate play on purpose:
-# the cluster is complete before it runs, so an OpenBao failure (policy, token, namespace) cannot leave it half-configured
-# or restart anything. Needs the ci-apply grant `+/secret/data/apps/k3s/*` create.
-- name: k3s token escrow
-  hosts: role_k3sc
-  gather_facts: false
-  tasks:
-    - name: Escrow tokens in OpenBao (first control node)
-      ansible.builtin.include_role:
-        name: svc_k3s
-        tasks_from: escrow
-      when: inventory_hostname == (groups['role_k3sc'] | sort | first)

@@ -5,6 +5,4 @@ verify_type: "{{ type | default('lxc') }}"
 verify_os: "{{ os | default('ubuntu2604') }}"
 verify_os_family: "{{ 'ubuntu' if verify_os.startswith('ubuntu') else verify_os }}"
 verify_max_used_pct: 85
-# L4 app checks: tests/apps/<spec role>.goss.yaml.j2, only when that file exists. Result: $VERIFY_OUT/<host>.l4.json
-# (scripts/verify.py expects one for exactly those guests; missing = fail).
-verify_app_tests: "{{ playbook_dir }}/../../tests/apps/{{ role | default('none') }}.goss.yaml.j2"
+# L4 app checks moved to homelab-apps (catalog, 03:15 verify). This role is L3 only.
