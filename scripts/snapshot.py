@@ -3,7 +3,8 @@
   snapshot.py take     --name pre-apply_YYYYmmdd_HHMM --hosts h1,h2    (ci-apply.sh)
   snapshot.py take     --name pre-patch_YYYYmmdd_HHMM --hosts h1,h2    (ci-patch.sh, ring-1 patching)
   snapshot.py rollback --name <snap> --hosts h1,h2        (guest is started again afterwards)
-  snapshot.py prune    --days 7 [--prefix pre-apply_]     (pre-apply_* and pre-patch_* older than N days, all pipeline guests)
+  snapshot.py take     --name pre-reboot_YYYYmmdd_HHMM --hosts h1  (ci-reboot.sh, approved reboot)
+  snapshot.py prune    --days 7 [--prefix pre-apply_]     (pre-apply_*, pre-patch_*, pre-reboot_* older than N days)
 Protected VMIDs (100, 300, 303) and the template range are never touched, whatever the specs say.
 Prints one line per host: <host> ok|fail <detail>. Exit 1 if any host failed."""
 import argparse, datetime, json, os, re, socket, ssl, sys, time, urllib.error, urllib.parse, urllib.request
@@ -13,8 +14,8 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from specs import load_specs  # noqa: E402
 
 PVE, NODE = "https://192.168.67.2:8006/api2/json", "hm1-mgt-pve01"
-PREFIXES = ("pre-apply_", "pre-patch_")          # pre-apply_ = ci-apply.sh, pre-patch_ = ci-patch.sh
-NAME_RE = re.compile(r"^pre-(apply|patch)_[0-9]{8}_[0-9]{4}$")
+PREFIXES = ("pre-apply_", "pre-patch_", "pre-reboot_")   # ci-apply.sh, ci-patch.sh, ci-reboot.sh (proposal 3.5)
+NAME_RE = re.compile(r"^pre-(apply|patch|reboot)_[0-9]{8}_[0-9]{4}$")
 NEVER = {100, 300, 303}                           # protected.yaml: no snapshots by the pipeline
 TEMPLATES = range(9000, 9200)                     # protected.yaml templates: clone-only
 _ctx = ssl._create_unverified_context()  # PVE API self-signed until the internal PKI covers it (provider: insecure)
@@ -97,10 +98,10 @@ def main():
                 print(f"{h} skip {e}")
         sys.exit(1 if bad else 0)
     if a.action == "take" and not NAME_RE.match(a.name):
-        sys.exit("snapshot name must be pre-apply_YYYYmmdd_HHMM or pre-patch_YYYYmmdd_HHMM")
+        sys.exit("snapshot name must be pre-apply_|pre-patch_|pre-reboot_ + YYYYmmdd_HHMM")
     if not a.name.startswith(PREFIXES):
         sys.exit(f"snapshot name must start with one of {PREFIXES}")
-    what = "patch" if a.name.startswith("pre-patch_") else "apply"
+    what = a.name[len("pre-"):].split("_")[0]   # apply | patch | reboot
     want = [h for h in a.hosts.split(",") if h]
     for h, (vmid, kind, ip) in guests(set(want)).items():
         try:
