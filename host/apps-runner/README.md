@@ -29,7 +29,8 @@ creates `/run/devops/apps/<run-id>/` (`<run-id>` = digits, unique per play) and 
 | `hosts` | file 0640 | one hostname per line → `--limit`; each must have an infra guest spec in `src/infra` |
 | `token` | file 0640 | this app's child token only (`APPS_BAO_TOKEN_FILE`) |
 | `env` | file 0640 | `KEY=VALUE` lines, allow-list below |
-| `agent.sock`, `agent.pid` | socket 0660, file | `ssh-agent -a <run dir>/agent.sock -t <timeout>` holding the `ci-apps` key |
+| `agent.sock`, `agent.pid` | socket 0660, file | `ssh-agent -a <run dir>/agent.sock -t <timeout>` holding the `ci-apps` key (the play reaches it only through `play-agent.sock`) |
+| `play-agent.sock` | socket 0660 root:runner-apps-play | created by `apps-play-run`: relays connections from uid runner-apps-play to the pinned `agent.sock` as root (ssh-agent refuses other uids) |
 
 `env` keys: `APPS_APP` (entry name), `APPS_MODE` (`check`/`apply` → `--check --diff`), `APPS_TIMEOUT` (60–14400 s,
 default 3600), `APPS_WAVE`, `BAO_ZONE_MODE`, `ANSIBLE_FORCE_COLOR`, `ANSIBLE_FORKS`, `ANSIBLE_STDOUT_CALLBACK`
