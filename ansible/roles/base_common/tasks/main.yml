@@ -45,8 +45,8 @@
     - fwupd-refresh.service
   when: base_fwupd_units.stdout is search(item)
 
-- name: Clear failed state of fwupd-refresh
-  ansible.builtin.command: systemctl reset-failed fwupd-refresh.service
+- name: Clear failed state of fwupd-refresh timer and service
+  ansible.builtin.command: systemctl reset-failed fwupd-refresh.timer fwupd-refresh.service
   register: base_fwupd_reset
   changed_when: false
   failed_when: false
