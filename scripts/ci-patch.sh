@@ -37,7 +37,7 @@ RC=0; SNAP=""
 # Never blocks patching.
 APPS_DIR="$W/apps"
 if ! clone homelab/homelab-apps "$APPS_DIR" "$GITEA_API_TOKEN" > "$PATCH_OUT/apps-clone.log" 2>&1; then
-  APPS_DIR=""; say "WARNING: homelab-apps clone failed: patch health falls back to the built-in checks"
+  APPS_DIR=""; say "WARNING: homelab-apps clone failed: no app health checks, L3 baseline only"
 fi
 apps_health_args() {  # hosts -> sets APPS_HEALTH (extra-vars args) or leaves it empty (fallback)
   APPS_HEALTH=()
