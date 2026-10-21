@@ -27,18 +27,18 @@ creates `/run/devops/apps/<run-id>/` (`<run-id>` = digits, unique per play) and 
 | `src/apps/`, `src/infra/` | dirs, group-readable | copies of the checked-out main trees **without `.git`**, no symlinks, no special files |
 | `inventory.yml` | file 0640 | inventory for this play |
 | `hosts` | file 0640 | one hostname per line → `--limit`; each must have an infra guest spec in `src/infra` |
-| `token` | file 0640 | this app's child token only (`APPS_BAO_TOKEN_FILE`) |
+| `token` | file 0640 | this app's child token only (`APPS_BAO_TOKEN_FILE`); `check`/`apply` only: a `verify` run dir must **not** have one (refused) |
 | `env` | file 0640 | `KEY=VALUE` lines, allow-list below |
 | `agent.sock`, `agent.pid` | socket 0660, file | `ssh-agent -a <run dir>/agent.sock -t <timeout>` holding the `ci-apps` key (the play reaches it only through `play-agent.sock`) |
 | `play-agent.sock` | socket 0660 root:runner-apps-play | created by `apps-play-run`: relays connections from uid runner-apps-play to the pinned `agent.sock` as root (ssh-agent refuses other uids) |
 
-`env` keys: `APPS_APP` (entry name), `APPS_MODE` (`check`/`apply` → `--check --diff`), `APPS_TIMEOUT` (60–14400 s,
+`env` keys: `APPS_APP` (entry name), `APPS_MODE` (`check` → `--check --diff`, `apply`, `verify` → `playbooks/verify.yml`, not check mode, no token, no `APPS_BAO_TOKEN_FILE`/`BAO_*` set), `APPS_TIMEOUT` (60–14400 s,
 default 3600), `APPS_WAVE`, `BAO_ZONE_MODE`, `ANSIBLE_FORCE_COLOR`, `ANSIBLE_FORKS`, `ANSIBLE_STDOUT_CALLBACK`
 (`default`/`minimal`/`oneline`). `SSH_AUTH_SOCK`, `APPS_BAO_TOKEN_FILE`, `BAO_ADDR`/`VAULT_ADDR`, `BAO_CACERT`/
 `VAULT_CACERT` may appear only with the value the wrapper sets anyway. Anything else is refused.
 
 The wrapper runs `ansible-playbook -i inventory.yml --limit <hosts> -e apps_run_app=<APPS_APP> [--check --diff]
-src/apps/playbooks/deploy.yml` from `src/apps` (its `ansible.cfg`) in a transient unit `apps-play-<run-id>`:
+src/apps/playbooks/deploy.yml` (`verify`: `src/apps/playbooks/verify.yml`) from `src/apps` (its `ansible.cfg`) in a transient unit `apps-play-<run-id>`:
 `User=runner-apps-play`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`,
 `ProtectProc=invisible`, empty capability set, `RuntimeMaxSec=APPS_TIMEOUT`, `ReadWritePaths=<run dir>
 /var/lib/runner-apps-play`, `InaccessiblePaths` for `/etc/openbao`, `/var/lib/devops`, all runner homes/configs,
