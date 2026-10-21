@@ -7,7 +7,7 @@
       for every host in HOSTS (csv) that is in a deployments/<zone>/<app>.yaml whose catalogue entry has `health`.
       `script` runs with /bin/bash on the guest: each service must be active, then the command under `timeout`.
       Prints the covered hosts (csv). Any unreadable/malformed deployment or entry -> exit 1: ci-patch.sh then passes
-      no file and patch_apply keeps its built-in checks (fallback, with a warning in the run).
+      no file and patch_apply runs no app checks (fallback: L3 baseline only, with a warning in the run).
   apps_health.py selftest
       offline unit test of compose() and the validation.
 

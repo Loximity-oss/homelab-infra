@@ -33,7 +33,8 @@ RC=0; SNAP=""
 # Patch health from the homelab-apps catalogue (proposal 3.2, migration step 9): one read-only clone of apps main per
 # run (infra gitea_ci_token: read on apps). patch_run() passes apps_health.py's extra vars (patch_apps_health) to
 # patch.yml; patch_apply runs those checks after each host. Clone/parse failed -> no file, a warning, and patch_apply
-# keeps its built-in checks (fallback). Never blocks patching.
+# runs no app checks (fallback: L3 baseline + failed-units only; the built-in DNS/k3s checks are gone, step 10c).
+# Never blocks patching.
 APPS_DIR="$W/apps"
 if ! clone homelab/homelab-apps "$APPS_DIR" "$GITEA_API_TOKEN" > "$PATCH_OUT/apps-clone.log" 2>&1; then
   APPS_DIR=""; say "WARNING: homelab-apps clone failed: patch health falls back to the built-in checks"
@@ -41,12 +42,12 @@ fi
 apps_health_args() {  # hosts -> sets APPS_HEALTH (extra-vars args) or leaves it empty (fallback)
   APPS_HEALTH=()
   if [ -z "$APPS_DIR" ]; then
-    echo "homelab-apps clone failed: built-in checks only (fallback)" > "$PATCH_OUT/apps-health.txt"
+    echo "homelab-apps clone failed: no app health checks, L3 baseline only (fallback)" > "$PATCH_OUT/apps-health.txt"
   elif covered=$(python3 "$BASE/scripts/apps_health.py" build "$APPS_DIR" "$1" "$PATCH_OUT/apps-health.json" 2> "$PATCH_OUT/apps-health.err"); then
     APPS_HEALTH=(-e "@$PATCH_OUT/apps-health.json")
     echo "catalogue health for: ${covered:-no host (none in a deployment)}" > "$PATCH_OUT/apps-health.txt"
   else
-    { echo "homelab-apps catalogue unreadable: built-in checks only (fallback)"; cat "$PATCH_OUT/apps-health.err"; } > "$PATCH_OUT/apps-health.txt"
+    { echo "homelab-apps catalogue unreadable: no app health checks, L3 baseline only (fallback)"; cat "$PATCH_OUT/apps-health.err"; } > "$PATCH_OUT/apps-health.txt"
   fi
   [ ${#APPS_HEALTH[@]} -gt 0 ] || say "WARNING: $(head -1 "$PATCH_OUT/apps-health.txt")"
   say "patch health: $(head -1 "$PATCH_OUT/apps-health.txt")"

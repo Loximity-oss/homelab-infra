@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Static check of the guest test files (decision 32), run in the PR gate against the PR tree. Never executes them:
-renders tests/os/*.goss.yaml.j2 for every guest spec, and tests/apps/<role>.goss.yaml.j2 (L4) for every guest of that
-role, with Jinja (sandboxed) and checks the Goss structure (e.g. a command needs exec + exit-status: issue #27).
+renders tests/os/*.goss.yaml.j2 for every guest spec with Jinja (sandboxed) and checks the Goss structure (e.g. a
+command needs exec + exit-status: issue #27). App checks (L4) live in homelab-apps since infra #127 step 10c.
 Usage: tests-check.py <pr_tree>"""
 import os, sys
 import jinja2.sandbox, yaml
@@ -34,7 +34,6 @@ def check(label, path, ctx):
                 errs.append(f"{label}: command {name}: needs exec and exit-status")
 
 
-apps = 0
 for s in load_specs(root):
     fam = "ubuntu" if s["os"].startswith("ubuntu") else s["os"]
     path = os.path.join(root, "tests/os", f"{fam}.goss.yaml.j2")
@@ -43,11 +42,5 @@ for s in load_specs(root):
     ctx = dict(gv, inventory_hostname=s["hostname"], verify_type=s.get("type", "lxc"), verify_os=s["os"],
                keyctl=s.get("keyctl", False), verify_max_used_pct=85)
     check(s["hostname"], path, ctx)
-    app = os.path.join(root, "tests/apps", f"{s['role']}.goss.yaml.j2")
-    if os.path.exists(app):   # L4: same vars the verify play loads for this host (all.yml + role_<role>.yml)
-        rv = os.path.join(root, "ansible/playbooks/group_vars", f"role_{s['role']}.yml")
-        actx = dict(ctx, **((yaml.safe_load(open(rv)) or {}) if os.path.exists(rv) else {}))
-        check(f"{s['hostname']} (tests/apps/{s['role']})", app, actx)
-        apps += 1
-print("\n".join(errs) if errs else f"tests: ok ({len(load_specs(root))} guest(s) rendered, {apps} with app checks)")
+print("\n".join(errs) if errs else f"tests: ok ({len(load_specs(root))} guest(s) rendered)")
 sys.exit(1 if errs else 0)
