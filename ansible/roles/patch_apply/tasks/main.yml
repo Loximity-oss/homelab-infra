@@ -94,6 +94,17 @@
   vars:
     verify_out: "{{ patch_apply_out }}"
 
+# Catalogue health (infra #127 step 9, proposal homelab-apps/3-patching.md 3.2): patch_apps_health is passed by
+# scripts/ci-patch.sh (-e @apps-health.json). Undefined or no entry for this host -> empty loop (built-in verify stays).
+- name: App health from the homelab-apps catalogue (proposal 3.2)
+  ansible.builtin.shell: "{{ item.script }}"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  loop: "{{ (patch_apps_health | default({})).get(inventory_hostname, []) }}"
+  loop_control:
+    label: "{{ item.app }}"
+
 - name: No new failed units after patching
   ansible.builtin.assert:
     that: patch_apply_failed_after.stdout_lines | difference(patch_apply_failed_before.stdout_lines) | length == 0
