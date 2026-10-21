@@ -45,8 +45,11 @@ app_adguard_filters:
     url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_31.txt
     enabled: true
 
-# ---- shared lists (empty today). Zones/hosts add theirs in the *_extra variables (appended to these).
-app_adguard_rewrites: []          # [{domain: x.example, answer: 192.0.2.1}]
+# ---- shared lists. Zones/hosts add theirs in the *_extra variables (appended to these).
+app_adguard_rewrites:             # [{domain: x.example, answer: 192.0.2.1, enabled: true}]
+  - domain: probe.hm1.lox-internal.dev
+    answer: 192.0.2.53
+    enabled: true
 app_adguard_user_rules: []        # AdGuard filtering rules, e.g. "||ads.example^"
 app_adguard_clients: []           # persistent clients in AdGuard's schema
 app_adguard_allowed_clients: []   # empty = everyone may query
