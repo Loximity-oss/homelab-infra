@@ -1,4 +1,5 @@
 timezone: Asia/Kuala_Lumpur
+# No-op: touching ansible/ makes the apply run Ansible on all hosts (ci-apps key on hosts from apps deployments, #127 step 7a).
 base_packages: [curl, ca-certificates, vim, htop, jq, unzip, gnupg, python3-apt]
 # Arch: no python3-apt; python is the interpreter package. inetutils = `hostname` (not in the Arch cloud image; the
 # L2 check and the L3 baseline call it, apply of #64).
