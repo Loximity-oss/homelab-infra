@@ -145,6 +145,14 @@ class ReadClass(unittest.TestCase):
         self.assertIsNone(mb.read_class(self.plans, SHA, "apps-"))
         self.put("apps-" + OLD, "B")
         self.assertEqual(mb.read_class(self.plans, OLD, "apps-"), "B")
+        self.assertIsNone(mb.read_class(self.plans, OLD, "std-"))      # an apps class never counts for standards
+        self.put("std-" + OLD, "C")
+        self.assertEqual(mb.read_class(self.plans, OLD, "std-"), "C")
+
+    def test_repos(self):
+        self.assertEqual(mb.REPOS, {"homelab/homelab-infra": "", "homelab/homelab-apps": "apps-",
+                                    "homelab/homelab-standards": "std-"})
+        self.assertEqual(mb.REFRESH, {"homelab/homelab-apps"})          # infra + standards refresh after their apply
         self.assertIsNone(mb.read_class(self.plans, OLD))
 
     def test_bad_sha_no_traversal(self):
@@ -232,6 +240,44 @@ class RunRefresh(unittest.TestCase):
         calls = self.go("homelab/homelab-infra")
         self.assertFalse(any("/update" in p for m, p in calls))
         self.assertNotIn(("GET", "/branches/main"), calls)
+
+    def test_standards_never_updates(self):
+        calls = self.go("homelab/homelab-standards")
+        self.assertFalse(any("/update" in p for m, p in calls))
+
+
+class RunStandards(unittest.TestCase):
+    """Standards: B merges on oc-rev, C only on faris, from std-<sha>/class.json; an unprefixed class does not count."""
+    def test_run(self):
+        repo = "homelab/homelab-standards"
+        with tempfile.TemporaryDirectory() as plans:
+            for d, cls in (("std-" + "1" * 40, "B"), ("std-" + "2" * 40, "C"), ("std-" + "3" * 40, "C"), ("4" * 40, "B")):
+                os.makedirs(os.path.join(plans, d))
+                with open(os.path.join(plans, d, "class.json"), "w") as f:
+                    json.dump({"class": cls}, f)
+            prs = [{"number": n, "title": "x", "user": {"login": "oc-infra"}, "labels": [], "head": {"sha": str(n) * 40}}
+                   for n in (1, 2, 3, 4)]
+            reviews = {n: [rv("oc-rev", "APPROVED", str(n) * 40)] for n in (1, 2, 4)}
+            reviews[3] = [rv("faris", "APPROVED", "3" * 40)]
+            calls = []
+
+            class Fake(mb.Gitea):
+                def api(self, method, path, body=None):
+                    calls.append((method, path, body))
+                    if path.startswith("/pulls?"):
+                        return prs
+                    if path.startswith("/commits/"):
+                        return status(url=f"/{repo}/actions/runs/1/jobs/1")
+                    if path.endswith("/reviews"):
+                        return reviews[int(path.split("/")[2])]
+                    return None
+            orig, mb.Gitea = mb.Gitea, Fake
+            try:
+                mb.run(repo, plans, "std-", "t", dry=False)
+            finally:
+                mb.Gitea = orig
+            merged = [p for m, p, b in calls if m == "POST" and p.endswith("/merge")]
+            self.assertEqual(merged, ["/pulls/1/merge", "/pulls/3/merge"])   # 2: C with oc-rev only; 4: no std- class
 
 
 if __name__ == "__main__":

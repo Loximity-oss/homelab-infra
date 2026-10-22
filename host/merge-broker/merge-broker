@@ -1,10 +1,10 @@
 #!/usr/bin/python3 -I
 """merge-broker — timer on hm1-shr-cicd01 (CT 300), every 2 minutes, user `runner`. Class C (infra #135).
 
-The only automated merger of homelab-infra and homelab-apps. Agents approve; they never merge. For every open PR:
+The only automated merger of homelab-infra, homelab-apps and homelab-standards (step 7). Agents approve; they never merge. For every open PR:
   1. skip WIP (title or label) and drafts;
   2. class = <plans>/<prefix><head sha>/class.json, written by main's ci-pr.sh with main's classifier after every check
-     passed (a regular file owned by `runner`, never a symlink). Labels are ignored. No file = not planned = no merge;
+     passed (a regular file owned by `runner`, never a symlink). Standards has no Class A (its classifier gives B or C). Labels are ignored. No file = not planned = no merge;
   3. the head must carry `pr / plan (pull_request_target)` = success, posted by Actions (creator null, target a run
      of this repo), never a status posted with a token;
   4. no reviewer's latest review is a non-dismissed REQUEST_CHANGES;
@@ -13,7 +13,7 @@ The only automated merger of homelab-infra and homelab-apps. Agents approve; the
   6. merge as ci-merger with head_commit_id = that sha (Gitea refuses if the head moved), comment why.
 Refresh (homelab-apps only): an open non-WIP PR whose merge base is not main's head is updated from main as ci-merger,
 which starts a new `pr` run (job-token updates start none). Infra is excluded: its open PRs are refreshed by ci-apply.sh
-after the apply, so plans are made against the applied state.
+after the apply, so plans are made against the applied state; standards PRs by its ci-apply.sh (refresh-open).
 Gitea token: `gitea_ci_token` (ci-merger) from OpenBao via AppRole ci-plan, read per run, never stored.
 OpenBao sealed or Gitea down = log and exit 0; the next run retries. Log: journalctl -u merge-broker.
 Usage: merge-broker [--dry-run]
@@ -23,7 +23,8 @@ import json, os, stat, subprocess, sys, urllib.error, urllib.request
 SERVER = os.environ.get("SERVER", "http://127.0.0.1:3000")
 PLANS = "/var/lib/devops/plans"                                     # both repos' ci-pr.sh write here (user runner)
 REPOS = {"homelab/homelab-infra": "",                               # <PLANS>/<sha>/class.json
-         "homelab/homelab-apps": "apps-"}                           # <PLANS>/apps-<sha>/class.json (apps step 5b)
+         "homelab/homelab-apps": "apps-",                           # <PLANS>/apps-<sha>/class.json (apps step 5b)
+         "homelab/homelab-standards": "std-"}                       # <PLANS>/std-<sha>/class.json (#135 step 7)
 REFRESH = {"homelab/homelab-apps"}                                  # repos whose stale PRs the broker updates
 CHECK = "pr / plan (pull_request_target)"
 APPROVERS = {"A": set(), "B": {"oc-rev", "faris"}, "C": {"faris"}}

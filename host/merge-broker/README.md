@@ -1,7 +1,7 @@
 # merge-broker (CT 300, root-installed, runs as `runner`)
 
-The only automated merger of `homelab-infra` and `homelab-apps` (infra #135, Faris 2026-10-20). Agents approve; they
-never merge. Branch protection merge whitelist = `ci-merger`, `faris`.
+The only automated merger of `homelab-infra`, `homelab-apps` and `homelab-standards` (infra #135, Faris 2026-10-20; standards
+since step 7). Agents approve; they never merge. Branch protection merge whitelist = `ci-merger`, `faris` in all three.
 
 | Class | Merges when (all on the current head sha) |
 |---|---|
@@ -11,7 +11,8 @@ never merge. Branch protection merge whitelist = `ci-merger`, `faris`.
 
 Never: WIP/draft, a non-dismissed REQUEST_CHANGES, no `class.json`, the author's own approval, a status posted with a token.
 Class comes only from `<plans>/<sha>/class.json` (main's `ci-pr.sh` + main's classifier; infra
-`/var/lib/devops/plans/<sha>/`, apps `/var/lib/devops/plans/apps-<sha>/`). Labels are display only.
+`/var/lib/devops/plans/<sha>/`, apps `/var/lib/devops/plans/apps-<sha>/`, standards `/var/lib/devops/plans/std-<sha>/`).
+Labels are display only. Standards has no Class A (B = additions to roles/services/tags, C = the rest).
 
 | File | Installed as |
 |---|---|
