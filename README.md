@@ -52,6 +52,7 @@ guest stacks: see `docs/templates.md`.
 | `pr` (runner `host-plan`) | PR opened/updated (`pull_request_target`, scripts from `main`) | update branch if behind → standards lint, tf-safety, fmt, yamllint, gitleaks, template specs → plan changed stacks (read-only token) → classify → label, comment, gate |
 | `apply` (runner `host-apply`) | merge to `main` | apply the PR's saved plan (fails if state moved) → Ansible on changed hosts → result comment |
 | `drift` (runner `host-plan`) | nightly 02:30 MYT | plan every stack; drift opens a `drift: <stack>` issue |
+| `reboot` (runner `host-apply`) | dispatched by OpenClaw `reboot_guest` after Faris's `reboot` comment | snapshot, drain/reboot one guest, verify (k3s control nodes one at a time) |
 | `template` (runner `host-template`) | merge touching `terraform/templates/**`; weekly refresh check | build/refresh VM templates with the builder token `svc-tpl-build` (the apply token stays clone-only) |
 
 | Class | Triggers | Gate |
@@ -72,6 +73,14 @@ ansible/keys/*.pub                 SSH keys injected into every guest
 policy/classify.py                 Class A/B/C
 scripts/                           CI (ci-pr, ci-apply, ci-drift, ci-template), changed/inventory/gitea helpers, tf-safety
 ```
+
+## Applications
+
+AdGuard Home and k3s are **not** configured from this repo since the homelab-apps cutover (infra #127, 2026-10-22).
+They live in **homelab-apps** (`catalog/<app>/`, `deployments/<zone>/<app>.yaml`, own runner `host-apps`, AppRole `ci-apps`).
+This repo creates the guests, runs `base_common` and the `verify` L1–L3 checks; after an `apply` that configures hosts
+it dispatches the homelab-apps `deploy` workflow (`APPS_DISPATCH` in `apply.yml`). Per-app notes: `docs/apps/`.
+Design and decisions: `docs/proposals/homelab-apps/`.
 
 ## Secrets
 
