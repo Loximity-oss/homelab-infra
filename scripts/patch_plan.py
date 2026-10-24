@@ -13,7 +13,7 @@ ROOT = os.environ.get("INFRA_ROOT") or os.path.dirname(os.path.dirname(os.path.a
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from specs import load_specs  # noqa: E402
 
-HARD_PROTECTED = {100, 300, 303}   # protected.yaml is read too; these are refused even if it were missing
+HARD_PROTECTED = {100, 300, 301, 303}   # protected.yaml is read too; these are refused even if it were missing
 KEYS = ("name", "installed", "candidate", "severity", "basis", "cves", "advisories", "reboot_hint")
 REBOOT_RULE = ("The pipeline never reboots. **Faris:** answer in this issue (approve or defer). There is no timeout. "
                "When approved: one host at a time; k3s control nodes drained first, wait for `Ready` and healthy etcd "

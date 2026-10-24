@@ -23,7 +23,7 @@ is applied on the following month's last Saturday; the monthly job checks the cu
   `patch: reboot <host>` (label `patch`): applied packages, still-pending reboot-hint packages, release-note links,
   and the k3s reboot rule. It stays open until Faris answers; no timeout. One comment per patch run that leaves a
   reboot pending (digest marker, no 6-hourly spam). It is closed only when a later scan reports no pending reboot.
-- **Protected guests** 100, 300, 303 and templates 9000-9199: refused by `patch_plan.py` (protected.yaml + hard
+- **Protected guests** 100, 300, 301, 303 and templates 9000-9199: refused by `patch_plan.py` (protected.yaml + hard
   list), by `snapshot.py` (hard list), and by the `patch_apply` role. ring0 is excluded by the scan play and by
   `patch_plan.py` (only `patch: ring1` specs are ever patched).
 - **Snapshot first:** a host whose snapshot failed is not patched (and the run fails).

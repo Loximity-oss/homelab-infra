@@ -1,4 +1,4 @@
-{"tag": "feat-keyctl", "protected": [100, 300, 303], "ranges": [[200, 699], [800, 899]],
+{"tag": "feat-keyctl", "protected": [100, 300, 301, 303], "ranges": [[200, 699], [800, 899]],
  "template_acls": [
   {"ranges": [[9000, 9099], [9990, 9999]], "role": "DevOpsTemplateBuild",
    "users": ["svc-tpl-build@pve"], "tokens": ["svc-tpl-build@pve!pipeline"]},
