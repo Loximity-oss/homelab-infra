@@ -5,7 +5,7 @@ Policy: skill `patching`. Faris approved the build 2026-10-18.
 ## Rings
 | Ring | Guests | Handling |
 |---|---|---|
-| `ring0` | protected / manual: CT 100, CT 300, CT 303 (none are in the specs) | never patched by the team; unattended security updates 03:00, no reboot |
+| `ring0` | protected / manual: CT 301 (OpenClaw), CT 300, CT 303, retired CT 100 (none are in the specs) | never patched by the team; unattended security updates 03:00, no reboot |
 | `ring1` | every spec with `patch: ring1` (the inventory group `patch_ring1` is generated from the specs by `scripts/inventory.py`; nothing to maintain) | Sev1/2 automatic; Sev3/4 in the monthly bundle |
 | `ring2` | none yet | scanned only |
 
@@ -38,7 +38,7 @@ Result per host on the runner: `$PATCH_OUT/<host>.scan.json` (counts, packages, 
 - A host missing from the dict gets Sev1/2 only. An empty list likewise.
 - A malformed value (not a dict of lists) fails the play before anything is installed.
 - With `patch_bundle_allow` undefined nothing changes: severity <= `patch_max_sev`.
-- All refusals stay: protected vmids (100/300/303), ring0, not ring1, snapshot name `pre-patch_<date>_<time>`, `patch_max_sev` 1-4.
+- All refusals stay: protected vmids (100/300/301/303), ring0, not ring1, snapshot name `pre-patch_<date>_<time>`, `patch_max_sev` 1-4.
 - `<host>.apply.json` reports `applied`, `deferred` (every scanned package not applied, so unapproved Sev3/4 are visible) and `bundle_mode`.
 
 ## Flow
@@ -49,7 +49,7 @@ Result per host on the runner: `$PATCH_OUT/<host>.scan.json` (counts, packages, 
 5. **Reboots:** `patch.yml` never reboots. If `reboot_pending` (or the hint) is true in `<host>.apply.json`, the pipeline opens or comments a Gitea issue `patch: reboot <host>` with the package summary and release notes. It stays pending until Faris answers, no timeout. Rule when he approves: one host at a time; k3s control nodes drained first, wait for `Ready` and healthy etcd before the next, never two control nodes at once, workers one at a time (docs/apps/k3s.md).
 6. **Snapshots:** pruned like `pre-apply_*` (7 days).
 
-Protected guests: `patch_apply` asserts vmid not in 100/300/303, not in ring0, and in ring1. They have no snapshots or patching from the team.
+Protected guests: `patch_apply` asserts vmid not in 100/300/301/303, not in ring0, and in ring1. They have no snapshots or patching from the team.
 
 ## Needed from the Infrastructure Engineer (pipeline, Class C)
 1. Scheduled workflow every 6 h: runs `patch-scan.yml` with `PATCH_OUT` set, keeps the scan JSON for later steps; opens/updates the reboot issues and the monthly bundle PR from it.
