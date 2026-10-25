@@ -1,0 +1,12 @@
+hostname: hm1-iot-app01
+vmid: 610
+type: lxc
+role: app
+os: ubuntu2604
+ip: 192.168.74.12
+cores: 1
+memory_mb: 512
+disk_gb: 4
+owner: faris
+patch: ring1
+description: TEMPORARY - destroy only on Faris go-ahead
