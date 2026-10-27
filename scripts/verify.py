@@ -112,7 +112,7 @@ def l1_protected(rep, prot, res):
     # broken (an ACL change, or pool membership adding rights: incident 2026-10-05).
     seen = [str(v) for v in prot.get("vmids", {}) if int(v) in res]
     rep.ok("platform", "L1", "protected guests invisible to the pipeline token (NoAccess intact)", not seen,
-           f"visible: {', '.join(seen)}" if seen else "100/300/301/303 not visible")
+           f"visible: {', '.join(seen)}" if seen else f"{'/'.join(str(v) for v in prot.get('vmids', {}))} not visible")
 
 
 def ssh(ip, cmd):

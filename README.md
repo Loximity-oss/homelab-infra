@@ -10,7 +10,7 @@ Create `terraform/stacks/hm1/<zone>/guests/<hostname>.yaml` on a branch `feat/<i
 
 ```yaml
 hostname: hm1-shr-dns01   # <site>-<zone>-<role><nn>, ≤15 chars, = file name
-vmid: 301                 # inside the zone block (shr = 300-399); 100/300 protected
+vmid: 315                 # inside the zone block (shr = 300-399); 300/301/303 protected
 type: lxc
 role: dns                 # naming/roles.yaml
 os: ubuntu2604
