@@ -8,5 +8,5 @@ patch_max_sev: 2
 patch_snapshot: ""
 patch_apply_snapshot_regex: '^pre-patch_[0-9]{8}_[0-9]{4}$'
 # Never patched by the team (protected.yaml); they run unattended security updates themselves.
-patch_apply_protected_vmids: [100, 300, 301, 303]
+patch_apply_protected_vmids: [300, 301, 303]
 patch_apply_out: "{{ patch_scan_out }}"
