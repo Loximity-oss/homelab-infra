@@ -11,7 +11,7 @@
   reboot_guest.py pve-reboot PLAN           Proxmox reboot (PROXMOX_VE_API_TOKEN = apply token) + SSH up + PID 1 restarted
   reboot_guest.py selftest
 Env: SERVER, REPO (homelab/homelab-infra), GITEA_API_TOKEN (read infra issues + read apps issues), INFRA_ROOT.
-Never touches protected VMIDs (protected.yaml + 100/300/301/303) or templates."""
+Never touches protected VMIDs (protected.yaml + 300/301/303) or templates."""
 import json, os, re, shlex, subprocess, sys, time, urllib.parse
 
 ROOT = os.environ.get("INFRA_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,7 +23,7 @@ UNIT = re.compile(r"^[A-Za-z0-9@._:-]{1,120}$")
 APPROVER = "faris"
 APPROVE_WORDS = {"reboot", "approve"}
 PIPELINE_MARKERS = ("<!-- digest:", "<!-- reboot-run:")
-HARD_PROTECTED = {100, 300, 301, 303}
+HARD_PROTECTED = {300, 301, 303}
 APPS_REPO = "homelab/homelab-apps"
 POLICIES = {"one_at_a_time", "pair", "drain"}
 K3S = "/usr/local/bin/k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml"
