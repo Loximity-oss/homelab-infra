@@ -4,3 +4,7 @@ patch_scan_out: "{{ lookup('env', 'PATCH_OUT') | default('/tmp/patch', true) }}"
 patch_scan_reboot_hint_regex: '^(linux-image|linux-modules|linux-generic|kernel(-core)?$|libc6$|glibc$|systemd$|dbus|openssl$|libssl)'
 # Severity feeds, queried on the runner. Unresolvable CVE => fail safe to Sev3 (never auto-applied).
 patch_scan_ubuntu_cve_url: "https://ubuntu.com/security/cves/{cve}.json"
+# Ubuntu CVE priorities are cached on the runner (shared by hosts and runs, 7-day TTL) and looked up within a time
+# budget per host; CVEs not resolved in time fall to the Sev3 fail safe (infra #169).
+patch_scan_cve_cache: "{{ patch_scan_out | dirname }}/ubuntu-cve-cache.json"
+patch_scan_cve_budget_s: 600
