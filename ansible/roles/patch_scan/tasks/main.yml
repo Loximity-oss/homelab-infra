@@ -47,8 +47,12 @@
       - "{{ inventory_hostname }}"
       - "{{ patch_scan_reboot_hint_regex }}"
       - "{{ patch_scan_ubuntu_cve_url }}"
+      - "{{ patch_scan_cve_cache }}"
+      - "{{ patch_scan_cve_budget_s }}"
   delegate_to: localhost
   changed_when: false
+  # Backstop above the script's own lookup budget.
+  timeout: "{{ patch_scan_cve_budget_s + 300 }}"
 
 - name: Load the classified scan
   ansible.builtin.set_fact:
