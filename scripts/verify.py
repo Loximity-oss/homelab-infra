@@ -6,13 +6,14 @@ Read-only except L3 copying Goss + the rendered test file to the guest.
 Usage: verify.py --standards DIR [--hosts h1,h2 | --all] [--gone host:vmid:ip,...] --out DIR [--no-l3]
 Env:   PROXMOX_VE_API_TOKEN (plan token: read-only), INFRA_ROOT (repo checkout). L2-L3 need the apply runner's SSH key.
 Writes DIR/verify.json and DIR/verify.md; exit 1 if any check failed (skips are reported as ⚠️, never as ✅).
---no-l3 skips the Goss layer (L3)."""
+--no-l3 skips the Goss layer (L3).
+os: none + tests: l1-only guests (specs.no_os, docs/lab-vms.md): L1 only; agent/IP rows and L2/L3 are reported as skips."""
 import argparse, json, os, re, socket, ssl, subprocess, sys, urllib.request
 import yaml
 
 ROOT = os.environ.get("INFRA_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
-from specs import load_specs  # noqa: E402
+from specs import load_specs, no_os  # noqa: E402
 
 PVE = "https://192.168.67.2:8006/api2/json"
 NODE = "hm1-mgt-pve01"
@@ -65,6 +66,25 @@ def expected_tags(s, zone):
     return t
 
 
+def l1_vm_extras(rep, h, s, cfg):
+    """Only for specs that set cpu_type / extra_nics: every other guest gets exactly the rows it got before."""
+    if "cpu_type" in s:
+        cpu = (cfg.get("cpu") or "").split(",")[0].replace("cputype=", "")
+        rep.ok(h, "L1", "cpu type", cpu == s["cpu_type"], f"{cpu or '-'} (spec {s['cpu_type']})")
+    for i, br in enumerate(s.get("extra_nics") or [], 1):
+        n = kv(cfg.get(f"net{i}"))
+        rep.ok(h, "L1", f"net{i} {br}", n.get("bridge") == br and not n.get("tag"),
+               f"{n.get('bridge') or 'missing'} tag {n.get('tag') or '-'}")
+        try:  # a lab bridge must stay isolated: no physical port, no host address
+            b = api(f"/nodes/{NODE}/network/{br}")
+            ports = str(b.get("bridge_ports") or "").strip()
+            rep.ok(h, "L1", f"{br} isolated",
+                   b.get("type") == "bridge" and ports in ("", "none") and not b.get("address") and not b.get("cidr"),
+                   f"type {b.get('type')} ports {ports or 'none'} address {b.get('cidr') or b.get('address') or '-'}")
+        except Exception as e:
+            rep.add(h, "L1", f"{br} isolated", "fail", f"bridge not readable on {NODE}: {e}")
+
+
 def l1(rep, s, zones, res):
     h, zone, typ = s["hostname"], s["_zone"], s.get("type", "lxc")
     z = zones[zone]
@@ -97,14 +117,22 @@ def l1(rep, s, zones, res):
         disk = size_gb(cfg.get("scsi0"))
         ip = (kv(cfg.get("ipconfig0")).get("ip") or "").split("/")[0]
         rep.ok(h, "L1", "machine q35", "q35" in cfg.get("machine", ""), cfg.get("machine"))
-        try:
-            ifs = api(f"/nodes/{NODE}/qemu/{s['vmid']}/agent/network-get-interfaces")["result"]
-            seen = {a["ip-address"] for i in ifs for a in i.get("ip-addresses", [])}
-            rep.ok(h, "L1", "guest agent IP", str(s["ip"]) in seen, f"agent sees {sorted(x for x in seen if ':' not in x)}")
-        except Exception as e:  # agent down = fail (the module requires it)
-            rep.add(h, "L1", "guest agent IP", "fail", f"agent not answering: {e}")
+        l1_vm_extras(rep, h, s, cfg)
+        if no_os(s):
+            ip = None
+            rep.add(h, "L1", "guest agent IP", "skip", "os none, tests: l1-only: no OS, no guest agent")
+        else:
+            try:
+                ifs = api(f"/nodes/{NODE}/qemu/{s['vmid']}/agent/network-get-interfaces")["result"]
+                seen = {a["ip-address"] for i in ifs for a in i.get("ip-addresses", [])}
+                rep.ok(h, "L1", "guest agent IP", str(s["ip"]) in seen, f"agent sees {sorted(x for x in seen if ':' not in x)}")
+            except Exception as e:  # agent down = fail (the module requires it)
+                rep.add(h, "L1", "guest agent IP", "fail", f"agent not answering: {e}")
     rep.ok(h, "L1", "disk", disk == sz["disk_gb"], f"{disk} G (spec {sz['disk_gb']})")
-    rep.ok(h, "L1", "ip", ip == str(s["ip"]), f"{ip} (spec {s['ip']})")
+    if ip is None:
+        rep.add(h, "L1", "ip", "skip", f"os none: {s['ip']} is reserved for the guest and set inside it, not by cloud-init")
+    else:
+        rep.ok(h, "L1", "ip", ip == str(s["ip"]), f"{ip} (spec {s['ip']})")
 
 
 def l1_protected(rep, prot, res):
@@ -229,16 +257,21 @@ def main():
     want = [h for h in want if h in specs]
     res = {int(r["vmid"]): r for r in api("/cluster/resources?type=vm")}
     l1_protected(rep, prot, res)
-    reach = []
+    reach, l1only = [], []
     for h in want:
         try:
             l1(rep, specs[h], zones, res)
         except Exception as e:
             rep.add(h, "L1", "platform read", "fail", e)
+        if no_os(specs[h]):  # os none + tests: l1-only (Faris 2026-10-31): no OS since day 0, nothing to reach or test
+            l1only.append(h)
+            for layer in ("L2", "L3"):
+                rep.add(h, layer, "not tested", "skip", "os none, tests: l1-only (VM without an OS)")
+            continue
         l2(rep, specs[h])
         if not any(r["host"] == h and r["layer"] == "L2" and r["status"] == "fail" for r in rep.rows):
             reach.append(h)
-    for h in sorted(set(want) - set(reach)):
+    for h in sorted(set(want) - set(reach) - set(l1only)):
         rep.add(h, "L3", "goss run", "fail", "skipped: not reachable over SSH (L2)")
     if not a.no_l3:
         l3(rep, reach, a.out)

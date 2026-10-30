@@ -1,18 +1,25 @@
 # Ubuntu (and later Windows) VMs cloned from a protected template (design-v7 decision 32).
 # Baseline sizing when the spec leaves it out (D6): 2 vCPU / 2 GB / 16 GB on SATA. Workload sizing is set in the spec
 # by the Configuration Engineer. Templates are clone-only for the apply token (protected.yaml `templates`).
+# `os: none` (with `tests: l1-only`, paired by lint/naming.py): blank disk, no OS since day 0 (e.g. a GNS3 lab VM):
+# no clone, no cloud-init, no guest agent; never configured by Ansible, tested at L1 only (docs/lab-vms.md).
+# `extra_nics`: net1.. on isolated lab bridges the zone lists in naming/zones.yaml `lab_bridges` (Network Engineer).
 locals {
   prefix          = split("/", var.zone_cfg.cidr)[1]
   protected_vmids = [for k, _ in try(var.protected.vmids, {}) : tonumber(k)]
   template_range  = try(var.protected.templates, [9000, 9199])
   is_stg          = var.zone == "stg"
+  lab_bridges     = try(var.zone_cfg.lab_bridges, [])
 
   guests = {
     for h, s in var.specs : h => merge(s, {
-      cores     = try(s.cores, var.default_cores)
-      memory_mb = try(s.memory_mb, var.default_memory_mb)
-      disk_gb   = try(s.disk_gb, var.default_disk_gb)
-      datastore = try(s.datastore, var.default_datastore)
+      cores      = try(s.cores, var.default_cores)
+      memory_mb  = try(s.memory_mb, var.default_memory_mb)
+      disk_gb    = try(s.disk_gb, var.default_disk_gb)
+      datastore  = try(s.datastore, var.default_datastore)
+      no_os      = try(s.os, "") == "none"
+      extra_nics = try(s.extra_nics, [])
+      cpu_type   = try(s.cpu_type, "x86-64-v2-AES")
       tags = sort(distinct(compact([
         "zone-${var.zone}",
         "role-${s.role}",
@@ -40,22 +47,26 @@ resource "proxmox_virtual_environment_vm" "guest" {
   machine       = "q35"
   scsi_hardware = "virtio-scsi-single"
 
-  clone {
-    vm_id        = var.vm_templates[each.value.os]
-    full         = true
-    datastore_id = each.value.datastore
-    node_name    = var.node_name
+  # os: none -> no clone: the VM is created empty with a blank scsi0.
+  dynamic "clone" {
+    for_each = each.value.no_os ? [] : [1]
+    content {
+      vm_id        = var.vm_templates[each.value.os]
+      full         = true
+      datastore_id = each.value.datastore
+      node_name    = var.node_name
+    }
   }
 
   agent {
-    enabled = true
+    enabled = !each.value.no_os # os: none has nothing inside that could answer
     trim    = true
     timeout = "10m"
   }
 
   cpu {
     cores = each.value.cores
-    type  = "x86-64-v2-AES"
+    type  = each.value.cpu_type
   }
 
   memory {
@@ -70,6 +81,7 @@ resource "proxmox_virtual_environment_vm" "guest" {
     discard      = "on"
     iothread     = true
     ssd          = true
+    file_format  = each.value.no_os ? "raw" : null # blank disk on lvm-thin; clones keep the template's format
   }
 
   network_device {
@@ -77,6 +89,16 @@ resource "proxmox_virtual_environment_vm" "guest" {
     vlan_id  = var.zone_cfg.vlan
     model    = "virtio"
     firewall = false
+  }
+
+  # net1..: isolated lab bridges (no uplink, no VLAN tag), only those listed for the zone (preconditions below).
+  dynamic "network_device" {
+    for_each = each.value.extra_nics
+    content {
+      bridge   = network_device.value
+      model    = "virtio"
+      firewall = false
+    }
   }
 
   operating_system {
@@ -88,29 +110,32 @@ resource "proxmox_virtual_environment_vm" "guest" {
   }
 
   vga {
-    type = "serial0"
+    type = each.value.no_os ? "std" : "serial0" # os: none needs a console to install the lab image
   }
 
-  initialization {
-    datastore_id = each.value.datastore
-    upgrade      = false # Ansible owns packages
+  dynamic "initialization" {
+    for_each = each.value.no_os ? [] : [1]
+    content {
+      datastore_id = each.value.datastore
+      upgrade      = false # Ansible owns packages
 
-    ip_config {
-      ipv4 {
-        address = "${each.value.ip}/${local.prefix}"
-        gateway = var.zone_cfg.gateway
+      ip_config {
+        ipv4 {
+          address = "${each.value.ip}/${local.prefix}"
+          gateway = var.zone_cfg.gateway
+        }
       }
-    }
 
-    dns {
-      domain  = var.domain
-      servers = var.dns_servers
-    }
+      dns {
+        domain  = var.domain
+        servers = var.dns_servers
+      }
 
-    # root + the pipeline keys, like LXC guests (verified on a throwaway clone of 9000, 2026-10-08).
-    user_account {
-      username = "root"
-      keys     = var.ssh_public_keys
+      # root + the pipeline keys, like LXC guests (verified on a throwaway clone of 9000, 2026-10-08).
+      user_account {
+        username = "root"
+        keys     = var.ssh_public_keys
+      }
     }
   }
 
@@ -135,12 +160,32 @@ resource "proxmox_virtual_environment_vm" "guest" {
       error_message = "Zone ${var.zone} does not take pipeline guests."
     }
     precondition {
-      condition     = contains(keys(var.vm_templates), each.value.os)
+      condition     = each.value.no_os || contains(keys(var.vm_templates), each.value.os)
       error_message = "No VM template for os '${each.value.os}' (vm_templates)."
+    }
+    precondition {
+      condition     = !each.value.no_os || try(each.value.tests, "") == "l1-only"
+      error_message = "os: none needs tests: l1-only (a VM without an OS can't pass L2/L3)."
     }
     precondition {
       condition     = each.value.disk_gb >= var.min_disk_gb
       error_message = "disk_gb ${each.value.disk_gb} is smaller than the template disk (${var.min_disk_gb} GB)."
+    }
+    precondition {
+      condition     = contains(["x86-64-v2-AES", "host"], each.value.cpu_type)
+      error_message = "cpu_type must be x86-64-v2-AES or host."
+    }
+    precondition {
+      condition     = alltrue([for b in each.value.extra_nics : !contains(try(var.protected.bridges, []), b)])
+      error_message = "extra_nics includes a protected bridge (management network)."
+    }
+    precondition {
+      condition     = alltrue([for b in each.value.extra_nics : contains(local.lab_bridges, b)])
+      error_message = "extra_nics ${jsonencode(each.value.extra_nics)} must all be lab bridges of zone ${var.zone} (naming/zones.yaml lab_bridges: ${jsonencode(local.lab_bridges)})."
+    }
+    precondition {
+      condition     = length(distinct(each.value.extra_nics)) == length(each.value.extra_nics)
+      error_message = "extra_nics lists a bridge twice."
     }
   }
 }

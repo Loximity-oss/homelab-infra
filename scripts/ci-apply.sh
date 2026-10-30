@@ -40,7 +40,8 @@ HOSTS=$(INFRA_ROOT="$BASE" python3 - "$W/applied-changed.json" <<'PY'
 import json, os, sys
 sys.path.insert(0, os.path.join(os.environ["INFRA_ROOT"], "scripts"))
 from specs import load_specs
-c = json.load(open(sys.argv[1])); have = {s["hostname"] for s in load_specs()}
+from specs import no_os  # os: none guests have nothing for Ansible to configure (docs/lab-vms.md)
+c = json.load(open(sys.argv[1])); have = {s["hostname"] for s in load_specs() if not no_os(s)}
 print(",".join(sorted(have if c["ansible_all"] else set(c["hosts"]) & have)))
 PY
 )
