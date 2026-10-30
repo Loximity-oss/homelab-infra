@@ -8,7 +8,7 @@ import jinja2.sandbox, yaml
 
 root = sys.argv[1]
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # main's scripts: no code is imported from the PR tree
-from specs import load_specs  # noqa: E402
+from specs import load_specs, no_os  # noqa: E402
 
 gv = yaml.safe_load(open(os.path.join(root, "ansible/playbooks/group_vars/all.yml")))
 env = jinja2.sandbox.SandboxedEnvironment(undefined=jinja2.StrictUndefined)
@@ -35,6 +35,8 @@ def check(label, path, ctx):
 
 
 for s in load_specs(root):
+    if no_os(s):  # os: none + tests: l1-only: no OS baseline to render (L1 only)
+        continue
     fam = "ubuntu" if s["os"].startswith("ubuntu") else s["os"]
     path = os.path.join(root, "tests/os", f"{fam}.goss.yaml.j2")
     if not os.path.exists(path):
