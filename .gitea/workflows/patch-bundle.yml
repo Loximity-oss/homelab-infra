@@ -1,4 +1,6 @@
 name: patch-bundle
+# Fixed title: Gitea otherwise shows the latest main commit message on scheduled runs.
+run-name: patch bundle
 # Monthly Sev3/4 bundle (docs/patching-pipeline.md): on the 25th a fresh scan becomes a PR
 # patches/hm1/<YYYY-MM>.{md,json} with the packages per ring-1 host and release-note links. The PR is Class C
 # (policy/classify.py: patches/*): only Faris's approval lets the last-Saturday job (patch-monthly) apply it.

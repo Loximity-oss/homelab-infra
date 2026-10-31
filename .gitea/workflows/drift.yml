@@ -1,4 +1,6 @@
 name: drift
+# Fixed title: Gitea otherwise shows the latest main commit message on scheduled runs.
+run-name: drift check
 on:
   schedule:
     - cron: "30 18 * * *" # 02:30 MYT

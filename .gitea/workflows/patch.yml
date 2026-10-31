@@ -1,4 +1,6 @@
 name: patch
+# Fixed title: Gitea otherwise shows the latest main commit message on scheduled runs.
+run-name: patch scan
 # Ring-1 patching (docs/patching-pipeline.md): read-only scan every 6 h, Sev1/2 auto-apply on ring 1 (pre-patch_
 # snapshot first, never reboots), 'patch: reboot <host>' issues for Faris. Runs on the apply runner (guest SSH key,
 # apply token for snapshots). A failure exits 1 -> pipeline.failed (workflow patch) -> SRE.

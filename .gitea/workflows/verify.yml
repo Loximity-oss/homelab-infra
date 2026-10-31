@@ -1,4 +1,6 @@
 name: verify
+# Fixed title: Gitea otherwise shows the latest main commit message on scheduled runs.
+run-name: verify guests
 # Nightly guest verification (design-v7 decision 32, T4): L1-L3 for every guest, one issue per failing host,
 # prune pre-apply_* snapshots older than 7 days. Runs on the apply runner (only it has the guest SSH key).
 on:
