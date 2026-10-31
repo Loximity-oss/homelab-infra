@@ -1,3 +1,4 @@
+# 2026-10-31: comment-only edit to re-run base_common (ci-apps key) after homelab-apps #32 (gns3) merged post-apply of #195.
 hostname: hm1-stg-net01
 vmid: 810
 type: vm
