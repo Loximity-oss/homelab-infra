@@ -22,4 +22,4 @@ extra_nics:
   - vmbr18
 owner: infra
 patch: ring0
-description: GNS3 network lab VM, blank disk (no OS since day 0); net0 stg uplink, net1-net9 isolated lab bridges vmbr10-vmbr18 (recreated after partial apply, #183/#186)
+description: GNS3 network lab VM, blank disk (no OS since day 0); net0 stg uplink, net1-net9 isolated lab bridges vmbr10-vmbr18 (recreated after partial apply and manual destroy of 810, #183/#186/#191)
