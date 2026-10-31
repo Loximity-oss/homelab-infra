@@ -1,4 +1,6 @@
 name: patch-monthly
+# Fixed title: Gitea otherwise shows the latest main commit message on scheduled runs.
+run-name: patch monthly
 # Last Saturday 02:00 MYT (docs/patching-pipeline.md): applies the month's bundle (patch_max_sev=4, only the approved
 # Sev3/4 packages) ONLY if its PR was merged with a current APPROVED review by faris. Snapshot first, never reboots.
 # The cron fires every Saturday 02:00 MYT; ci-patch.sh exits 0 unless it is the last Saturday of the month (MYT).
