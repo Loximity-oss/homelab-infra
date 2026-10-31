@@ -1,3 +1,4 @@
+# Base layer re-converge after SSH was unblocked (infra #190).
 hostname: hm1-iot-app01
 vmid: 603
 type: lxc
