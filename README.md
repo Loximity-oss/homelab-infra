@@ -88,7 +88,7 @@ vmid: 315                 # inside the VMID block of the zone
 type: lxc                 # lxc or vm
 role: dns                 # from naming/roles.yaml
 os: ubuntu2604
-ip: 192.168.70.10         # inside the static band .10-.99 of the zone
+ip: 192.168.70.14         # inside the static band .10-.99 of the zone, not in the zone's reserved_ips
 cores: 1
 memory_mb: 1024
 disk_gb: 8
