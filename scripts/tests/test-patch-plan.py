@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Unit tests for the report format of scripts/patch_plan.py (infra #206): CVE count, top links, body size.
+"""Unit tests for the report format of scripts/patch_plan.py (infra #206): CVE count, top links, body size;
+post-patch test section (verify.py results in DIR/verify).
 No network, no Gitea. Run: python3 scripts/tests/test-patch-plan.py"""
-import importlib.machinery, importlib.util, json, os, pathlib, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, pathlib, tempfile, unittest
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "patch_plan.py"
 loader = importlib.machinery.SourceFileLoader("patch_plan", str(SRC))
@@ -75,6 +76,77 @@ class Summary(unittest.TestCase):
         md = self.run_summary(400)
         self.assertLessEqual(len(md.encode()), pp.BODY_MAX)
         self.assertIn("max Sev2", md)
+
+
+class PostPatchTests(unittest.TestCase):
+    SNAP = "pre-patch_20261103_0340"
+
+    def make(self, root, rows=None, verify=True):
+        d = os.path.join(root, "20261103_0340-scan"); os.mkdir(d)
+        json.dump({"host": "hm1-shr-k3sc01", "applied": ["bpftool"], "snapshot": self.SNAP, "max_sev": 2,
+                   "reboot_pending": "false"}, open(os.path.join(d, "hm1-shr-k3sc01.apply.json"), "w"))
+        if verify:
+            os.mkdir(os.path.join(d, "verify"))
+            json.dump({"snapshot": self.SNAP, "hosts": "hm1-shr-k3sc01,hm1-shr-k3sc02"},
+                      open(os.path.join(d, "verify", "meta.json"), "w"))
+            if rows is not None:
+                json.dump({"rows": rows, "failed": sum(r["status"] == "fail" for r in rows)},
+                          open(os.path.join(d, "verify", "verify.json"), "w"))
+        return d
+
+    ROWS = [{"host": "platform", "layer": "L1", "check": "protected invisible", "status": "pass", "evidence": ""},
+            {"host": "hm1-shr-k3sc01", "layer": "L1", "check": "running", "status": "pass", "evidence": "running"},
+            {"host": "hm1-shr-k3sc01", "layer": "L2", "check": "ping", "status": "skip", "evidence": "no ICMP"},
+            {"host": "hm1-shr-k3sc02", "layer": "L3", "check": "service:k3s:running", "status": "fail",
+             "evidence": "Expected true | got false"}]
+
+    def summary(self, d):
+        out = os.path.join(os.path.dirname(d), "summary.md")
+        pp.summary(d, "Sev1/2 auto-apply 20261103_0340 (FAILED)", out)
+        return open(out).read()
+
+    def text(self, d):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            pp.tests(d)
+        return buf.getvalue()
+
+    def test_summary_section_per_host(self):
+        with tempfile.TemporaryDirectory() as root:
+            md = self.summary(self.make(root, self.ROWS))
+        self.assertIn("### Post-patch tests", md)
+        self.assertIn("| `hm1-shr-k3sc01` | patch applied | ✅ 1 passed, 1 skipped | - |", md)
+        self.assertIn("| `hm1-shr-k3sc02` | no apply result", md)
+        self.assertIn("Expected true \\| got false", md)          # pipe escaped inside the table
+        self.assertIn(f"rollback --name {self.SNAP} --hosts hm1-shr-k3sc02`", md)
+        self.assertNotIn("--hosts platform", md)
+
+    def test_all_green_no_rollback_hint(self):
+        with tempfile.TemporaryDirectory() as root:
+            md = self.summary(self.make(root, self.ROWS[:3]))
+        self.assertIn("### Post-patch tests", md)
+        self.assertNotIn("rollback", md)
+
+    def test_did_not_run(self):
+        with tempfile.TemporaryDirectory() as root:
+            d = self.make(root, None)
+            md, txt = self.summary(d), self.text(d)
+        self.assertIn("did not run on hm1-shr-k3sc01,hm1-shr-k3sc02", md)
+        self.assertIn("did not run", txt)
+
+    def test_no_tests_no_section(self):
+        with tempfile.TemporaryDirectory() as root:
+            md = self.summary(self.make(root, verify=False))
+        self.assertNotIn("Post-patch tests", md)
+
+    def test_text_for_issue(self):
+        with tempfile.TemporaryDirectory() as root:
+            txt = self.text(self.make(root, self.ROWS))
+        self.assertIn("hm1-shr-k3sc02: FAILED, 1 of 1 failed", txt)
+        self.assertIn("L3 service:k3s:running: Expected true | got false", txt)
+        self.assertIn(f"snapshot.py rollback --name {self.SNAP} --hosts hm1-shr-k3sc02", txt)
+        self.assertIn("hm1-shr-k3sc01: ok, 1 passed, 1 skipped [patch applied]", txt)
+        self.assertLessEqual(len(txt.splitlines()), 60)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,24 @@ is applied on the following month's last Saturday; the monthly job checks the cu
 - `pre-patch_*` snapshots are pruned after 7 days with `pre-apply_*` by the nightly `verify` workflow
   (`snapshot.py prune`, both prefixes by default). Rollback stays the SRE's call.
 
+## Post-patch tests (L1-L3, Faris 2026-11-03)
+After `patch.yml` in every patch run (Sev1/2 `scan` and `monthly`), `ci-patch.sh` runs `scripts/verify.py` (the
+apply's test set: L1 platform incl. the protected-guest visibility row, L2 reachability, L3 Goss OS baseline) on
+**every host handed to `patch.yml`** (= every host with a pre-patch snapshot), also when `patch.yml` failed, so the SRE
+sees the state of the host the rollout stopped on. Before this, the only checks were inside `patch_apply` (L3
+baseline + no new failed units + catalogue app health, per host, stopping the rollout at the first bad host); those
+stay unchanged.
+- Runs while the host locks of the patch run are still held (like the apply's tests); read-only token for L1.
+- Results in `$PATCH_OUT/verify/` (`verify.json`, `verify.md`, `meta.json`) and `tests.txt`; the summary
+  (`patch: Sev1/2 applied <YYYY-MM>` / bundle PR comment) gets a per-host table: patch result, pass/fail/skip,
+  the first failed checks, and the rollback command with the pre-patch snapshot name for failed guests.
+- A failed test, or no result at all, -> `patch: failed (<mode>)` with the per-host failures and the snapshot name
+  -> exit 1 -> `pipeline.failed` -> SRE. **Never an automatic rollback, never a reboot**: rollback is the SRE's call.
+- Monthly: a test failure does not block the `monthly-<M>.done` marker (the bundle was applied; re-applying it would
+  not fix the test). A `patch.yml` failure still does, as before.
+- Hosts with no apply result (rollout stopped) are tested too and labelled so; a failure there may predate the run.
+  A failing L1 row that is not about patching (spec drift, protected guest visible) also fails the patch run.
+
 ## Report format (infra #206)
 Package tables in `patch: Sev1/2 applied <YYYY-MM>`, `patch: reboot <host>` and the bundle `.md`: package,
 `installed -> new`, Sev, basis, **CVE count**, the 3 highest-priority CVE / advisory links (Ubuntu priority from the
@@ -41,8 +59,8 @@ runner and the bundle `.json`. Display only: Sev, selection, snapshots and reboo
 Test: `python3 scripts/tests/test-patch-plan.py`.
 
 ## Failures
-Any failure exits 1 -> `pipeline.failed` (workflow `patch`, `patch-bundle` or `patch-monthly`) -> SRE, plus an
-issue `patch: failed (<mode>)` with the log tail and the snapshot name. Run data is kept 35 days on the runner in
+Any failure (including a failed post-patch test) exits 1 -> `pipeline.failed` (workflow `patch`, `patch-bundle` or
+`patch-monthly`) -> SRE, plus an issue `patch: failed (<mode>)` with the log tail and the snapshot name. Run data is kept 35 days on the runner in
 `/var/lib/devops/patch/<stamp>-<mode>/` (`latest` -> newest): `<host>.scan.json`, `<host>.apply.json`, logs.
 
 ## Needs outside this repo
