@@ -6,7 +6,7 @@ to $PATCH_OUT (<host>.scan.json, <host>.apply.json). Never reboots; never select
   patch_plan.py bundle  DIR STANDARDS MONTH OUTDIR  OUTDIR/<MONTH>.json + .md (Sev3/4 per ring-1 host); prints host count
   patch_plan.py allow   BUNDLE STANDARDS OUT        extra vars {patch_bundle_allow: {host: [pkg]}}; prints hosts
   patch_plan.py summary DIR TITLE OUT               markdown of the apply results"""
-import calendar, datetime, glob, hashlib, json, os, subprocess, sys, tempfile
+import calendar, datetime, glob, hashlib, json, os, re, subprocess, sys, tempfile, urllib.parse
 import yaml
 
 ROOT = os.environ.get("INFRA_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,7 +14,14 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from specs import load_specs  # noqa: E402
 
 HARD_PROTECTED = {300, 301, 303}   # protected.yaml is read too; these are refused even if it were missing
-KEYS = ("name", "installed", "candidate", "severity", "basis", "cves", "advisories", "reboot_hint")
+KEYS = ("name", "installed", "candidate", "severity", "basis", "cves", "advisories", "reboot_hint", "source")
+# Report format only (infra #206): per package a CVE count and the TOP_REFS highest-priority links, then "+N more".
+# The full lists stay in <host>.scan.json on the runner and in the bundle .json. Never changes Sev or selection.
+TOP_REFS = 3
+BODY_MAX = 30000   # bytes per issue / comment / PR body; Gitea's limit is 65535, stay well below it
+PRIO_RANK = {"critical": 1, "high": 2, "medium": 3, "low": 4, "negligible": 5}
+RPM_RANK = {"Critical": 1, "Important": 2, "Moderate": 3, "Low": 4}
+PRIO = {}          # CVE -> Ubuntu priority from classify.py's runner cache; only orders the links
 REBOOT_RULE = ("The pipeline never reboots. **Faris:** answer in this issue (approve or defer). There is no timeout. "
                "When approved: one host at a time; k3s control nodes drained first, wait for `Ready` and healthy etcd "
                "before the next, never two control nodes at once, workers one at a time (docs/apps/k3s.md).")
@@ -52,18 +59,62 @@ def as_list(v):
     return list(v or [])
 
 
-def refs(p):
-    r = [f"[{c}](https://ubuntu.com/security/{c})" for c in p.get("cves") or []]
-    r += [f"[{a['id']}](https://bodhi.fedoraproject.org/updates/{a['id']})" for a in p.get("advisories") or [] if a.get("id")]
-    return " ".join(r) or "-"
+def load_prio(d):
+    """Ubuntu CVE priorities from the patch_scan cache (<PATCH_OUT>/../ubuntu-cve-cache.json, written by classify.py).
+    Display only: decides which CVE links are shown first. No cache -> newest CVE ids first."""
+    p = os.environ.get("PATCH_CVE_CACHE") or os.path.join(os.path.dirname(os.path.abspath(d)), "ubuntu-cve-cache.json")
+    try:
+        c = json.load(open(p))
+        PRIO.update({k: str(v.get("p") or "").lower() for k, v in c.items() if isinstance(v, dict)})
+    except (OSError, ValueError, AttributeError):
+        pass
 
 
-def table(pkgs):
-    rows = ["| Package | Installed | New | Sev | Basis | CVE / advisory | Reboot hint |", "|---|---|---|---|---|---|---|"]
+def cve_key(c):
+    m = re.fullmatch(r"CVE-(\d+)-(\d+)", c)
+    y, n = (int(m[1]), int(m[2])) if m else (0, 0)
+    return (PRIO_RANK.get(PRIO.get(c), 9), -y, -n, c)
+
+
+def refs(p, top=TOP_REFS):
+    """The `top` highest-priority CVE / advisory links, then '+N more'; a link to all CVEs of the source package
+    when the scan provides `source`."""
+    links = [(cve_key(c)[0], f"[{c}](https://ubuntu.com/security/{c})" + (f" {PRIO[c]}" if PRIO.get(c) in PRIO_RANK else ""))
+             for c in sorted(set(p.get("cves") or []), key=cve_key)]
+    advs = {a["id"]: a for a in p.get("advisories") or [] if a.get("id")}.values()
+    links += [(RPM_RANK.get(a.get("severity"), 9), f"[{a['id']}](https://bodhi.fedoraproject.org/updates/{a['id']})"
+               + (f" {a['severity']}" if a.get("severity") else "")) for a in sorted(advs, key=lambda a: a["id"])]
+    if not links:
+        return "-"
+    links.sort(key=lambda x: x[0])   # stable: newest CVE first within a priority
+    shown = [l for _, l in links[:top]]
+    more = len(links) - len(shown)
+    if more:
+        shown.append(f"+{more} more" if shown else f"{more} not listed")
+    if p.get("source") and p.get("cves"):
+        shown.append(f"([all](https://ubuntu.com/security/cves?package={urllib.parse.quote(str(p['source']))}))")
+    return " ".join(shown)
+
+
+def table(pkgs, top=TOP_REFS):
+    rows = ["| Package | Installed -> New | Sev | Basis | CVEs | Top CVE / advisory | Reboot hint |",
+            "|---|---|---|---|---|---|---|"]
     for p in sorted(pkgs, key=lambda p: (p.get("severity") or 9, p["name"])):
-        rows.append(f"| `{p['name']}` | {p.get('installed') or '-'} | {p.get('candidate') or '-'} | Sev{p.get('severity')} | "
-                    f"{p.get('basis', '')} | {refs(p)} | {'yes' if p.get('reboot_hint') else ''} |")
+        n = len(set(p.get("cves") or []))
+        rows.append(f"| `{p['name']}` | {p.get('installed') or '-'} -> {p.get('candidate') or '-'} | Sev{p.get('severity')} | "
+                    f"{p.get('basis', '')} | {n or '-'} | {refs(p, top)} | {'yes' if p.get('reboot_hint') else ''} |")
     return "\n".join(rows)
+
+
+def fit(build):
+    """build(top) -> markdown. Fewer links per package until it fits BODY_MAX bytes; last resort: cut at a line."""
+    for top in (TOP_REFS, 1, 0):
+        text = build(top)
+        if len(text.encode()) <= BODY_MAX:
+            return text
+    cut = text.encode()[:BODY_MAX - 400].decode(errors="ignore").rsplit("\n", 1)[0]
+    return (cut + f"\n\n_Cut at {BODY_MAX} bytes: the full per-package results are on the runner "
+            f"(`{os.environ.get('PATCH_OUT') or '$PATCH_OUT'}`)._\n")
 
 
 def gitea(*args):
@@ -79,6 +130,7 @@ def sev12(d, std):
 
 
 def reboot(d):
+    load_prio(d)
     sc, ap = results(d, "scan"), results(d, "apply")
     specs = {s["hostname"]: s for s in load_specs()}
     for h in sorted(set(sc) | set(ap)):
@@ -96,16 +148,20 @@ def reboot(d):
         key = json.dumps([h, sorted(applied), (a or {}).get("snapshot")] if a and applied else [h, "pending"])
         dig = hashlib.sha256(key.encode()).hexdigest()[:16]
         sp = specs.get(h, {})
-        body = [f"**Reboot pending** for `{h}` (vmid {sp.get('vmid', '?')}, zone {sp.get('_zone', '?')}).", "", REBOOT_RULE, ""]
-        if a and applied:
-            body += [f"### Applied (snapshot `{a.get('snapshot')}`, max Sev{a.get('max_sev')})", "", table(done) if done else
-                     ", ".join(f"`{x}`" for x in sorted(applied)), ""]
-        if hint:
-            body += ["### Still pending, usually need a reboot", "", table(hint), ""]
-        body += ["Release notes: CVE / advisory links above; full changelog on the guest with `apt changelog <pkg>` "
-                 "or `dnf updateinfo info <advisory>`.", "", f"<!-- digest:{dig} -->"]
+        head = [f"**Reboot pending** for `{h}` (vmid {sp.get('vmid', '?')}, zone {sp.get('_zone', '?')}).", "", REBOOT_RULE, ""]
+
+        def build(top):
+            body = list(head)
+            if a and applied:
+                body += [f"### Applied (snapshot `{a.get('snapshot')}`, max Sev{a.get('max_sev')})", "", table(done, top) if done
+                         else ", ".join(f"`{x}`" for x in sorted(applied)), ""]
+            if hint:
+                body += ["### Still pending, usually need a reboot", "", table(hint, top), ""]
+            body += ["Release notes: highest-priority CVE / advisory links above (count per package); full changelog on "
+                     "the guest with `apt changelog <pkg>` or `dnf updateinfo info <advisory>`."]
+            return "\n".join(body) + "\n"
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
-            f.write("\n".join(body) + "\n")
+            f.write(fit(build) + f"\n<!-- digest:{dig} -->\n")
         gitea("issue-ensure", title, "patch", f.name)
         os.unlink(f.name)
 
@@ -122,6 +178,7 @@ def apply_window(y, m):
 
 
 def bundle(d, std, month, outdir):
+    load_prio(d)
     r1, sc = ring1(std), results(d, "scan")
     hosts = {}
     for h in sorted(set(sc) & set(r1)):
@@ -136,7 +193,7 @@ def bundle(d, std, month, outdir):
         json.dump(doc, f, indent=1, sort_keys=True)
     total = sum(len(v) for v in hosts.values())
     reb = sorted(h for h, pk in hosts.items() if any(p.get("reboot_hint") for p in pk))
-    md = [f"Monthly Sev3/4 patch bundle **{month}** for ring 1: {total} package(s) on {len(hosts)} host(s).", "",
+    head = [f"Monthly Sev3/4 patch bundle **{month}** for ring 1: {total} package(s) on {len(hosts)} host(s).", "",
           f"**Faris:** approve this PR (Class C) and merge it to have it applied on **{when} 02:00 MYT** "
           "(`patch.yml -e patch_max_sev=4`, one host at a time, `pre-patch_` snapshot first, verify after). "
           "Only the packages listed here are applied as Sev3/4; Sev1/2 are applied automatically anyway. "
@@ -144,14 +201,18 @@ def bundle(d, std, month, outdir):
           "a pending reboot opens a `patch: reboot <host>` issue for your answer.", "",
           f"Reboot hint after this bundle: {', '.join(f'`{h}`' for h in reb) or 'none'}.", ""]
     if missing:
-        md += [f"Not scanned (unreachable or failed scan, not in this bundle): {', '.join(f'`{h}`' for h in missing)}.", ""]
-    for h, pk in hosts.items():
-        md += [f"### `{h}`", "", table(pk), ""]
-    md += ["Release notes: CVE / advisory links per package; full changelog on the guest with `apt changelog <pkg>` or "
-           "`dnf updateinfo info <advisory>`. Machine-readable list: `patches/hm1/" + month + ".json`.", "",
-           "_Opened by the `patch-bundle` workflow (docs/patching-pipeline.md)._"]
+        head += [f"Not scanned (unreachable or failed scan, not in this bundle): {', '.join(f'`{h}`' for h in missing)}.", ""]
+
+    def build(top):
+        md = list(head)
+        for h, pk in hosts.items():
+            md += [f"### `{h}`", "", table(pk, top), ""]
+        md += ["Release notes: highest-priority CVE / advisory links per package (all of them in the .json); full "
+               "changelog on the guest with `apt changelog <pkg>` or `dnf updateinfo info <advisory>`. Machine-readable "
+               "list: `patches/hm1/" + month + ".json`.", "", "_Opened by the `patch-bundle` workflow (docs/patching-pipeline.md)._"]
+        return "\n".join(md) + "\n"
     with open(os.path.join(outdir, f"{month}.md"), "w") as f:
-        f.write("\n".join(md) + "\n")
+        f.write(fit(build))
     print(len(hosts))
 
 
@@ -164,20 +225,24 @@ def allow(path, std, out):
 
 
 def summary(d, title, out):
+    load_prio(d)
     sc, ap = results(d, "scan"), results(d, "apply")
-    md = [f"## {title}", ""]
-    if not ap:
-        md += ["No host finished patching (see the run log / `patch: failed` issue).", ""]
-    for h in sorted(ap):
-        a = ap[h]
-        applied = set(as_list(a.get("applied")))
-        done = [p for p in (sc.get(h) or {}).get("packages", []) if p["name"] in applied]
-        md += [f"### `{h}` (snapshot `{a.get('snapshot')}`, max Sev{a.get('max_sev')})", "",
-               table(done) if done else ("Applied: " + (", ".join(f"`{x}`" for x in sorted(applied)) or "nothing")), "",
-               "Deferred: " + (", ".join(f"`{x}`" for x in as_list(a.get("deferred"))) or "-"),
-               "Reboot pending: " + (f"yes, issue `patch: reboot {h}`" if truthy(a.get("reboot_pending")) else "no"), ""]
+
+    def build(top):
+        md = [f"## {title}", ""]
+        if not ap:
+            md += ["No host finished patching (see the run log / `patch: failed` issue).", ""]
+        for h in sorted(ap):
+            a = ap[h]
+            applied = set(as_list(a.get("applied")))
+            done = [p for p in (sc.get(h) or {}).get("packages", []) if p["name"] in applied]
+            md += [f"### `{h}` (snapshot `{a.get('snapshot')}`, max Sev{a.get('max_sev')})", "",
+                   table(done, top) if done else ("Applied: " + (", ".join(f"`{x}`" for x in sorted(applied)) or "nothing")), "",
+                   "Deferred: " + (", ".join(f"`{x}`" for x in as_list(a.get("deferred"))) or "-"),
+                   "Reboot pending: " + (f"yes, issue `patch: reboot {h}`" if truthy(a.get("reboot_pending")) else "no"), ""]
+        return "\n".join(md) + "\n"
     with open(out, "w") as f:
-        f.write("\n".join(md) + "\n")
+        f.write(fit(build))
 
 
 if __name__ == "__main__":

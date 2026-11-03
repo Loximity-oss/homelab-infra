@@ -32,6 +32,14 @@ is applied on the following month's last Saturday; the monthly job checks the cu
 - `pre-patch_*` snapshots are pruned after 7 days with `pre-apply_*` by the nightly `verify` workflow
   (`snapshot.py prune`, both prefixes by default). Rollback stays the SRE's call.
 
+## Report format (infra #206)
+Package tables in `patch: Sev1/2 applied <YYYY-MM>`, `patch: reboot <host>` and the bundle `.md`: package,
+`installed -> new`, Sev, basis, **CVE count**, the 3 highest-priority CVE / advisory links (Ubuntu priority from the
+runner's `ubuntu-cve-cache.json`, then newest; Fedora advisory severity) and `+N more`. A body above 30000 bytes is
+re-rendered with 1, then 0 links per package, and cut at a line as a last resort. Full lists: `<host>.scan.json` on the
+runner and the bundle `.json`. Display only: Sev, selection, snapshots and reboots are unchanged.
+Test: `python3 scripts/tests/test-patch-plan.py`.
+
 ## Failures
 Any failure exits 1 -> `pipeline.failed` (workflow `patch`, `patch-bundle` or `patch-monthly`) -> SRE, plus an
 issue `patch: failed (<mode>)` with the log tail and the snapshot name. Run data is kept 35 days on the runner in
