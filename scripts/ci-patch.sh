@@ -8,6 +8,8 @@
 # Never reboots anything. Protected VMIDs / templates / ring0 are never selected (patch_plan.py, snapshot.py, role).
 # Host locks (step 4b): the read-only scan takes none; patch_run() locks its whole host set in ONE lock_hosts call
 # before the snapshot and releases it when the patch run ends.
+# Post-patch tests: after patch.yml, scripts/verify.py (L1-L3, the apply's test set) on every host handed to patch.yml,
+# still under the host locks; results in the summary; a failure fails the run (never a rollback, never a reboot).
 # Results kept on the runner in /var/lib/devops/patch/<stamp>-<mode>/ (35 days; 'latest' = newest).
 # Exit 1 on any failure -> pipeline.failed (workflow patch*) -> SRE; a 'patch: failed (<mode>)' issue has the log tail.
 BASE=$(cd "$(dirname "$0")/.." && pwd)
@@ -19,6 +21,7 @@ trap unlock_hosts EXIT
 bao_login ci-apply
 export GITEA_API_TOKEN; GITEA_API_TOKEN=$(secret plan gitea_ci_token)
 APPLY_TOKEN=$(secret apply pve_token_apply)
+PLAN_PVE_TOKEN=$(secret plan pve_token_plan)   # read-only, for the L1 post-patch tests (as ci-apply.sh / ci-verify.sh)
 bao_logout
 
 STAMP=$(date +%Y%m%d_%H%M)
@@ -29,7 +32,7 @@ find "$KEEP" -mindepth 1 -maxdepth 1 -type d -mtime +35 -exec rm -rf {} + 2>/dev
 export PATCH_OUT="$KEEP/$STAMP-$MODE"; mkdir -p "$PATCH_OUT"
 W=$(mktemp -d); STD="$W/standards"
 clone homelab/homelab-standards "$STD" "$GITEA_API_TOKEN"
-RC=0; SNAP=""
+RC=0; SNAP=""; TESTS_RC=0
 # Patch health from the homelab-apps catalogue (proposal 3.2, migration step 9): one read-only clone of apps main per
 # run (infra gitea_ci_token: read on apps). patch_run() passes apps_health.py's extra vars (patch_apps_health) to
 # patch.yml; patch_apply runs those checks after each host. Clone/parse failed -> no file, a warning, and patch_apply
@@ -74,6 +77,35 @@ scan() {  # read-only; writes $PATCH_OUT/<host>.scan.json
   [ "$ok" -eq 0 ] || fail_issue "scan failed on at least one host (the others are still handled)" "$PATCH_OUT/scan.log"
 }
 
+# Post-patch tests (Faris 2026-11-03): the same L1-L3 set the apply runs (scripts/verify.py: L1 platform, L2
+# reachability, L3 Goss OS baseline) on every host handed to patch.yml, also after a failed patch.yml (the SRE needs
+# the state of the host the rollout stopped on). Called inside patch_run, so the host locks are still held. Read-only
+# apart from L3 copying Goss to the guest. Never rolls back, never reboots. A failure, or no result at all ->
+# fail_issue (snapshot name + rollback command) and TESTS_RC=1 -> exit 1 -> pipeline.failed -> SRE.
+# TESTS_RC is kept apart from RC so that the monthly done-marker keeps meaning "bundle applied" (re-applying the same
+# packages next month would not fix a failing test); the summary title and the exit code use both.
+post_patch_tests() {  # hosts (comma list)
+  local hosts=$1 vok=0 rc=$RC
+  mkdir -p "$PATCH_OUT/verify"
+  printf '{"snapshot": "%s", "hosts": "%s"}\n' "$SNAP" "$hosts" > "$PATCH_OUT/verify/meta.json"
+  say "post-patch tests (L1-L3, scripts/verify.py) on $hosts"
+  PROXMOX_VE_API_TOKEN="$PLAN_PVE_TOKEN" INFRA_ROOT="$BASE" python3 "$BASE/scripts/verify.py" --standards "$STD" \
+    --hosts "$hosts" --out "$PATCH_OUT/verify" > "$PATCH_OUT/verify.log" 2>&1 || vok=$?
+  if [ ! -f "$PATCH_OUT/verify/verify.json" ]; then
+    tail -30 "$PATCH_OUT/verify.log" || true
+    fail_issue "post-patch tests (L1-L3) did not run on $hosts: their state after patching is unknown" "$PATCH_OUT/verify.log"
+    TESTS_RC=1
+  else
+    PLAN tests "$PATCH_OUT" > "$PATCH_OUT/tests.txt" 2>&1 || true
+    cat "$PATCH_OUT/tests.txt"
+    if [ "$vok" -ne 0 ]; then
+      fail_issue "post-patch tests (L1-L3, scripts/verify.py) failed; per host below" "$PATCH_OUT/tests.txt"
+      TESTS_RC=1
+    fi
+  fi
+  RC=$rc
+}
+
 patch_run() {  # max_sev hosts [extra ansible args]: locks, then snapshot; only hosts with a snapshot are patched
   local sev=$1 hosts=$2 snapped ok=0; shift 2
   SNAP="pre-patch_$STAMP"
@@ -96,6 +128,7 @@ patch_run() {  # max_sev hosts [extra ansible args]: locks, then snapshot; only 
       -e patch_max_sev="$sev" -e patch_snapshot="$SNAP" "${APPS_HEALTH[@]}" "$@") > "$PATCH_OUT/patch.log" 2>&1 || ok=$?
     grep -A40 'PLAY RECAP' "$PATCH_OUT/patch.log" || tail -40 "$PATCH_OUT/patch.log" || true
     [ "$ok" -eq 0 ] || fail_issue "patch.yml failed (max_sev=$sev); rollout stopped at the first bad host" "$PATCH_OUT/patch.log"
+    post_patch_tests "$snapped"
   fi
   unlock_hosts
 }
@@ -107,7 +140,7 @@ scan)
   if [ -n "$HOSTS" ]; then
     say "Sev1/2 on ring 1: $HOSTS"
     patch_run 2 "$HOSTS"
-    PLAN summary "$PATCH_OUT" "Sev1/2 auto-apply $STAMP ($([ $RC -eq 0 ] && echo ok || echo FAILED))" "$PATCH_OUT/summary.md"
+    PLAN summary "$PATCH_OUT" "Sev1/2 auto-apply $STAMP ($([ $((RC | TESTS_RC)) -eq 0 ] && echo ok || echo FAILED))" "$PATCH_OUT/summary.md"
     GITEA issue-upsert "patch: Sev1/2 applied $MONTH" patch "$PATCH_OUT/summary.md" || true
   else
     say "no Sev1/2 packages on ring 1"
@@ -156,12 +189,13 @@ sys.exit(0 if t.weekday() == 5 and t.day + 7 > calendar.monthrange(t.year, t.mon
     if [ -z "$HOSTS" ]; then echo "bundle $M lists no ring-1 host"; touch "$KEEP/monthly-$M.done"; break; fi
     patch_run 4 "$HOSTS" -e "@$PATCH_OUT/allow.json"
     PLAN reboot "$PATCH_OUT" || RC=1
-    PLAN summary "$PATCH_OUT" "Monthly bundle $M applied ($([ $RC -eq 0 ] && echo ok || echo FAILED))" "$PATCH_OUT/summary.md"
+    PLAN summary "$PATCH_OUT" "Monthly bundle $M applied ($([ $((RC | TESTS_RC)) -eq 0 ] && echo ok || echo FAILED))" "$PATCH_OUT/summary.md"
     GITEA comment "$PRN" "$PATCH_OUT/summary.md" || true
+    # RC only (not TESTS_RC): done = the bundle was applied; a failing post-patch test is the SRE's, not a re-apply.
     [ $RC -eq 0 ] && touch "$KEEP/monthly-$M.done"
     break
   done
   ;;
 *) echo "unknown mode $MODE"; exit 2 ;;
 esac
-exit $RC
+exit $((RC | TESTS_RC))

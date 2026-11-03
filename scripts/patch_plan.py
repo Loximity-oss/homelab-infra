@@ -5,7 +5,8 @@ to $PATCH_OUT (<host>.scan.json, <host>.apply.json). Never reboots; never select
   patch_plan.py reboot  DIR                         open/comment 'patch: reboot <host>'; close when no longer pending
   patch_plan.py bundle  DIR STANDARDS MONTH OUTDIR  OUTDIR/<MONTH>.json + .md (Sev3/4 per ring-1 host); prints host count
   patch_plan.py allow   BUNDLE STANDARDS OUT        extra vars {patch_bundle_allow: {host: [pkg]}}; prints hosts
-  patch_plan.py summary DIR TITLE OUT               markdown of the apply results"""
+  patch_plan.py summary DIR TITLE OUT               markdown of the apply results (+ post-patch tests, DIR/verify)
+  patch_plan.py tests   DIR                         plain-text post-patch test result (job log, 'patch: failed' issue)"""
 import calendar, datetime, glob, hashlib, json, os, re, subprocess, sys, tempfile, urllib.parse
 import yaml
 
@@ -224,6 +225,94 @@ def allow(path, std, out):
     print(",".join(sorted(al)))
 
 
+def verify_result(d):
+    """Post-patch tests of this run (ci-patch.sh post_patch_tests -> DIR/verify/{meta,verify}.json).
+    None = no tests in this run (nothing was patched); (meta, None) = the tests ran but left no result."""
+    vd = os.path.join(d, "verify")
+    if not os.path.isdir(vd):
+        return None
+    try:
+        meta = json.load(open(os.path.join(vd, "meta.json")))
+    except (OSError, ValueError):
+        meta = {}
+    try:
+        rows = json.load(open(os.path.join(vd, "verify.json")))["rows"]
+    except (OSError, ValueError, KeyError, TypeError):
+        rows = None
+    return meta, rows
+
+
+def by_host(rows):
+    out = {}
+    for r in rows:
+        out.setdefault(r["host"], []).append(r)
+    return out
+
+
+def patch_state(h, applied):
+    if h == "platform":
+        return "platform check (not a guest)"
+    return "patch applied" if h in applied else "no apply result: patch.yml failed on this host or stopped before it"
+
+
+def tally(rs):
+    bad = [r for r in rs if r["status"] == "fail"]
+    skip = sum(r["status"] == "skip" for r in rs)
+    res = (f"{len(bad)} of {len(rs)} failed" if bad else f"{len(rs) - skip} passed") + (f", {skip} skipped" if skip else "")
+    return bad, res
+
+
+def tests_md(d, applied, n=5):
+    """Summary section: one row per tested host, its failed checks (first n) and the rollback hint for the SRE."""
+    v = verify_result(d)
+    if v is None:
+        return []
+    meta, rows = v
+    snap = meta.get("snapshot") or "?"
+    md = ["### Post-patch tests (L1 platform, L2 reachability, L3 OS baseline: `scripts/verify.py`)", ""]
+    if rows is None:
+        return md + [f"❌ The tests did not run on {meta.get('hosts') or '?'}: state after patching unknown "
+                     "(`verify.log` on the runner).", ""]
+    md += ["| Host | Patch | Tests | Failed checks |", "|---|---|---|---|"]
+    bad_hosts = []
+    for h, rs in by_host(rows).items():
+        bad, res = tally(rs)
+        cell = [f"{r['layer']} {r['check']}: {r['evidence'][:80]}" for r in bad[:n]] + ([f"+{len(bad) - n} more"] if len(bad) > n else [])
+        cell = "<br>".join(x.replace("|", "\\|").replace("`", "'") for x in cell) or "-"
+        md.append(f"| `{h}` | {patch_state(h, applied)} | {'❌' if bad else '✅'} {res} | {cell} |")
+        if bad and h != "platform":
+            bad_hosts.append(h)
+    md.append("")
+    if bad_hosts:
+        md += [f"Pre-patch snapshot `{snap}` (kept 7 days). Rollback is the SRE's call, never automatic: "
+               f"`snapshot.py rollback --name {snap} --hosts {','.join(bad_hosts)}`.", ""]
+    return md
+
+
+def tests(d):
+    """Plain text for the job log and the 'patch: failed' issue (fail_issue keeps the last 60 lines)."""
+    v = verify_result(d)
+    if v is None:
+        print("no post-patch tests in this run")
+        return
+    meta, rows = v
+    snap = meta.get("snapshot") or "?"
+    if rows is None:
+        print(f"post-patch tests did not run on {meta.get('hosts') or '?'}: state after patching unknown")
+        return
+    applied = set(results(d, "apply"))
+    for h, rs in by_host(rows).items():
+        bad, res = tally(rs)
+        print(f"{h}: {'FAILED' if bad else 'ok'}, {res} [{patch_state(h, applied)}]")
+        for r in bad[:6]:
+            print(f"  {r['layer']} {r['check']}: {r['evidence'][:120]}")
+        if len(bad) > 6:
+            print(f"  +{len(bad) - 6} more (verify.md on the runner)")
+        if bad and h != "platform":
+            print(f"  rollback is the SRE's call (never automatic): snapshot.py rollback --name {snap} --hosts {h}")
+    print(f"pre-patch snapshot: {snap} (kept 7 days); full report: {os.path.join(d, 'verify', 'verify.md')}")
+
+
 def summary(d, title, out):
     load_prio(d)
     sc, ap = results(d, "scan"), results(d, "apply")
@@ -240,6 +329,7 @@ def summary(d, title, out):
                    table(done, top) if done else ("Applied: " + (", ".join(f"`{x}`" for x in sorted(applied)) or "nothing")), "",
                    "Deferred: " + (", ".join(f"`{x}`" for x in as_list(a.get("deferred"))) or "-"),
                    "Reboot pending: " + (f"yes, issue `patch: reboot {h}`" if truthy(a.get("reboot_pending")) else "no"), ""]
+        md += tests_md(d, set(ap))
         return "\n".join(md) + "\n"
     with open(out, "w") as f:
         f.write(fit(build))
@@ -247,4 +337,4 @@ def summary(d, title, out):
 
 if __name__ == "__main__":
     cmd, args = sys.argv[1], sys.argv[2:]
-    {"sev12": sev12, "reboot": reboot, "bundle": bundle, "allow": allow, "summary": summary}[cmd](*args)
+    {"sev12": sev12, "reboot": reboot, "bundle": bundle, "allow": allow, "summary": summary, "tests": tests}[cmd](*args)
