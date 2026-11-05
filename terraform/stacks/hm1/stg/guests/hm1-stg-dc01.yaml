@@ -9,6 +9,5 @@ memory_mb: 2048
 disk_gb: 16
 owner: faris
 patch: ring1
-description: Samba AD DC feasibility test in an unprivileged LXC (homelab-apps samba-dc,
-  stg)
+description: Samba AD DC feasibility test in an unprivileged LXC (homelab-apps samba-dc, stg)
 datastore: lvmt-sata01
