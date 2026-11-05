@@ -1,0 +1,13 @@
+hostname: hm1-wifi-dc01
+vmid: 510
+type: lxc
+role: dc
+os: ubuntu2604
+ip: 192.168.69.13
+cores: 2
+memory_mb: 2048
+disk_gb: 16
+owner: faris
+patch: ring1
+description: Samba AD DC for WiFi zone - Samba configured by Ansible role (Configuration
+  Engineer)
