@@ -1,0 +1,14 @@
+hostname: hm1-stg-dc01
+vmid: 811
+type: lxc
+role: dc
+os: ubuntu2604
+ip: 192.168.76.11
+cores: 2
+memory_mb: 2048
+disk_gb: 16
+owner: faris
+patch: ring1
+description: Samba AD DC feasibility test in an unprivileged LXC (homelab-apps samba-dc,
+  stg)
+datastore: lvmt-sata01
