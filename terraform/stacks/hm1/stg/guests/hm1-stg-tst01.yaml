@@ -1,0 +1,11 @@
+hostname: hm1-stg-tst01
+vmid: 812
+type: vm
+role: tst
+os: ubuntu2604
+ip: 192.168.76.12
+cores: 4
+memory_mb: 4096
+owner: infra
+patch: ring1
+description: Ubuntu 26.04 baseline-only test VM (no role/app), 4 vCPU / 4 GiB
