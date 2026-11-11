@@ -28,6 +28,10 @@
     update_cache: true
   when: ansible_os_family == 'Archlinux'
 
+- name: Grow root partition and filesystem to the disk size (VMs; no-op on LXC)
+  ansible.builtin.include_tasks: grow_root.yml
+  when: ansible_virtualization_type | default('') != 'lxc'
+
 - name: Check whether fwupd-refresh units exist
   ansible.builtin.command: systemctl list-unit-files --no-legend fwupd-refresh.timer fwupd-refresh.service
   register: base_fwupd_units

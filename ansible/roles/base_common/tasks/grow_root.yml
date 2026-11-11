@@ -1,0 +1,37 @@
+# Grow the root partition and filesystem when the virtual disk is larger (online disk resize in Terraform).
+# cloud-init's growpart runs once per instance only, so a later disk grow is never picked up without this.
+# Idempotent: no-op when the partition already fills the disk or / is not on a partition (LXC, LVM, ZFS).
+- name: Install growpart (cloud-guest-utils)
+  ansible.builtin.apt:
+    name: cloud-guest-utils
+    state: present
+    lock_timeout: 600
+  when: ansible_os_family == 'Debian'
+
+- name: Grow root partition and filesystem to the disk size
+  ansible.builtin.shell: |
+    set -u
+    src=$(findmnt -no SOURCE /)
+    case "$src" in /dev/*) ;; *) exit 0 ;; esac
+    pk=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1)
+    [ -n "$pk" ] || exit 0
+    pn=$(cat "/sys/class/block/$(basename "$src")/partition" 2>/dev/null) || exit 0
+    fstype=$(findmnt -no FSTYPE /)
+    before=$(df -B1 --output=size / | tail -1 | tr -dc 0-9)
+    rc=0
+    growpart "/dev/$pk" "$pn" >/dev/null 2>&1 || rc=$?
+    # rc 1 = NOCHANGE (already full size); anything else is a real failure
+    [ "$rc" -le 1 ] || { echo "growpart failed rc=$rc" >&2; exit 1; }
+    case "$fstype" in
+      ext2|ext3|ext4) resize2fs "$src" >/dev/null 2>&1 ;;
+      xfs) xfs_growfs / >/dev/null 2>&1 ;;
+      btrfs) btrfs filesystem resize max / >/dev/null 2>&1 ;;
+      *) echo "unsupported fs $fstype" >&2; exit 1 ;;
+    esac
+    after=$(df -B1 --output=size / | tail -1 | tr -dc 0-9)
+    [ "$after" != "$before" ] && echo GROWN
+    exit 0
+  args:
+    executable: /bin/bash
+  register: base_grow_root
+  changed_when: "'GROWN' in base_grow_root.stdout"
