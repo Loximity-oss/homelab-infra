@@ -1,6 +1,8 @@
 # Grow the root partition and filesystem when the virtual disk is larger (online disk resize in Terraform).
 # cloud-init's growpart runs once per instance only, so a later disk grow is never picked up without this.
-# Idempotent: no-op when the partition already fills the disk or / is not on a partition (LXC, LVM, ZFS).
+# Idempotent: no change reported when the partition and fs already fill the disk. Skips (with a reason in the
+# task output, never a guess) when / is not on a plain partition (LXC, LVM, ZFS) or root is not the LAST partition.
+# Failures of growpart / resize2fs / xfs_growfs fail the play (no swallowed errors).
 - name: Install growpart (cloud-guest-utils)
   ansible.builtin.apt:
     name: cloud-guest-utils
@@ -10,27 +12,41 @@
 
 - name: Grow root partition and filesystem to the disk size
   ansible.builtin.shell: |
-    set -u
-    src=$(findmnt -no SOURCE /)
-    case "$src" in /dev/*) ;; *) exit 0 ;; esac
-    pk=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1)
-    [ -n "$pk" ] || exit 0
-    pn=$(cat "/sys/class/block/$(basename "$src")/partition" 2>/dev/null) || exit 0
+    set -eu
+    skip() { echo "SKIP: $*"; exit 0; }
+    src=$(readlink -f "$(findmnt -no SOURCE /)")
+    case "$src" in /dev/*) ;; *) skip "/ is not on a block device ($src)" ;; esac
+    name=$(basename "$src")
+    [ -r "/sys/class/block/$name/partition" ] || skip "$src is not a plain partition (LVM/ZFS/whole disk)"
+    pk=$(basename "$(readlink -f "/sys/class/block/$name/..")")
+    pn=$(cat "/sys/class/block/$name/partition")
     fstype=$(findmnt -no FSTYPE /)
+    case "$fstype" in ext2|ext3|ext4|xfs) ;; *) skip "unsupported filesystem $fstype" ;; esac
+    # Layout check: root must be the partition with the highest start sector on the disk.
+    mystart=$(cat "/sys/class/block/$name/start")
+    for s in /sys/class/block/$pk/*/start; do
+      [ "$(cat "$s")" -le "$mystart" ] || skip "root ($name) is not the last partition on $pk"
+    done
+    # Make the kernel re-read the (possibly just resized) virtual disk size.
+    if [ -w "/sys/class/block/$pk/device/rescan" ]; then echo 1 > "/sys/class/block/$pk/device/rescan"; sleep 2; fi
+    disk=$(cat "/sys/class/block/$pk/size")
+    pend=$((mystart + $(cat "/sys/class/block/$name/size")))
     before=$(df -B1 --output=size / | tail -1 | tr -dc 0-9)
-    rc=0
-    growpart "/dev/$pk" "$pn" >/dev/null 2>&1 || rc=$?
-    # rc 1 = NOCHANGE (already full size); anything else is a real failure
-    [ "$rc" -le 1 ] || { echo "growpart failed rc=$rc" >&2; exit 1; }
+    # More than 1 MiB (2048 sectors) of unused disk behind the root partition: grow the partition.
+    if [ $((disk - pend)) -gt 2048 ]; then
+      command -v growpart >/dev/null || skip "growpart not installed"
+      rc=0; growpart "/dev/$pk" "$pn" > /tmp/base_growpart.log 2>&1 || rc=$?
+      # rc 1 = NOCHANGE; anything else is a real failure
+      if [ "$rc" -gt 1 ]; then cat /tmp/base_growpart.log >&2; echo "growpart failed rc=$rc" >&2; exit 1; fi
+      udevadm settle || true
+    fi
+    # Grow the filesystem to the partition (no-op when it already fills it).
     case "$fstype" in
-      ext2|ext3|ext4) resize2fs "$src" >/dev/null 2>&1 ;;
-      xfs) xfs_growfs / >/dev/null 2>&1 ;;
-      btrfs) btrfs filesystem resize max / >/dev/null 2>&1 ;;
-      *) echo "unsupported fs $fstype" >&2; exit 1 ;;
-    esac
+      xfs) xfs_growfs / ;;
+      *) resize2fs "$src" ;;
+    esac >/tmp/base_growfs.log 2>&1 || { cat /tmp/base_growfs.log >&2; echo "fs grow failed" >&2; exit 1; }
     after=$(df -B1 --output=size / | tail -1 | tr -dc 0-9)
-    [ "$after" != "$before" ] && echo GROWN
-    exit 0
+    if [ "$after" != "$before" ]; then echo "GROWN: $before -> $after bytes"; else echo "OK: nothing to grow"; fi
   args:
     executable: /bin/bash
   register: base_grow_root
