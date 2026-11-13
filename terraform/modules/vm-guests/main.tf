@@ -11,6 +11,19 @@ locals {
   is_stg          = var.zone == "stg"
   lab_bridges     = try(var.zone_cfg.lab_bridges, [])
 
+  # Named single-guest exception (Faris 2026-11-13, hm1-mgt-jump01; docs/mgt-jumpbox-exception.md). A guest may sit in a
+  # zone with guests: false and on a protected bridge ONLY when protected.yaml `exemptions` (Faris-only) AND the zone's
+  # `guest_allow` (naming/zones.yaml) both name its hostname with this VMID and the zone's bridge. lint/naming.py also
+  # pins the IP. Missing or mismatched -> false -> the preconditions below refuse it, as for every other guest.
+  exempt = {
+    for h, s in var.specs : h => (
+      try(tonumber(var.protected.exemptions[h].vmid), -1) == tonumber(s.vmid) &&
+      try(var.protected.exemptions[h].bridge, "") == var.zone_cfg.bridge &&
+      try(tonumber(var.zone_cfg.guest_allow[h].vmid), -2) == tonumber(s.vmid) &&
+      try(var.zone_cfg.guest_allow[h].bridge, "") == var.zone_cfg.bridge
+    )
+  }
+
   guests = {
     for h, s in var.specs : h => merge(s, {
       cores      = try(s.cores, var.default_cores)
@@ -152,12 +165,12 @@ resource "proxmox_virtual_environment_vm" "guest" {
       error_message = "VMID ${each.value.vmid} is in the template range (protected.yaml templates); templates are never managed."
     }
     precondition {
-      condition     = !contains(try(var.protected.bridges, []), var.zone_cfg.bridge)
-      error_message = "Bridge ${var.zone_cfg.bridge} is protected (management network)."
+      condition     = !contains(try(var.protected.bridges, []), var.zone_cfg.bridge) || local.exempt[each.key]
+      error_message = "Bridge ${var.zone_cfg.bridge} is protected (management network); only a guest named with this VMID and bridge in both protected.yaml exemptions and the zone's guest_allow may use it."
     }
     precondition {
-      condition     = var.zone_cfg.guests == true
-      error_message = "Zone ${var.zone} does not take pipeline guests."
+      condition     = var.zone_cfg.guests == true || local.exempt[each.key]
+      error_message = "Zone ${var.zone} does not take pipeline guests (no matching protected.yaml exemption + guest_allow for ${each.key})."
     }
     precondition {
       condition     = each.value.no_os || contains(keys(var.vm_templates), each.value.os)

@@ -1,0 +1,11 @@
+hostname: hm1-mgt-jump01
+vmid: 110
+type: vm
+role: jump
+os: ubuntu2604
+ip: 192.168.67.10
+cores: 2
+memory_mb: 2048
+owner: infra
+patch: ring1
+description: Management jumpbox, the single named exception to the vmbr0/mgt limit (Faris 2026-11-13; docs/mgt-jumpbox-exception.md)
