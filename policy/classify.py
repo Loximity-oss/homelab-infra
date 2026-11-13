@@ -127,9 +127,11 @@ for pf in sorted(pathlib.Path(a.plans).glob("*.plan.json")):
                 reasons["C"].append(f"protected VMID {vmid}: {addr}")
             if vmid is not None and tlo <= int(vmid) <= thi:
                 reasons["C"].append(f"template VMID {vmid}: {addr}")
-            for nic in side.get("network_interface") or []:
-                if nic.get("bridge") in pbridges:
-                    reasons["C"].append(f"protected bridge {nic.get('bridge')}: {addr}")
+            # LXC NICs are network_interface[], VM NICs are network_device[] (bpg/proxmox); check both, both sides.
+            for key in ("network_interface", "network_device"):
+                for nic in side.get(key) or []:
+                    if isinstance(nic, dict) and nic.get("bridge") in pbridges:
+                        reasons["C"].append(f"protected bridge {nic.get('bridge')} ({key}): {addr}")
 
 cls = "C" if reasons["C"] else "B" if reasons["B"] else "A"
 print(json.dumps({"class": cls, "reasons": reasons[cls] or ["routine change"], "all_reasons": reasons, "summary": summary}))
