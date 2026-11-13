@@ -85,7 +85,20 @@ def l1_vm_extras(rep, h, s, cfg):
             rep.add(h, "L1", f"{br} isolated", "fail", f"bridge not readable on {NODE}: {e}")
 
 
-def l1(rep, s, zones, res):
+def exempt(s, z, prot):
+    """Same rule as the vm-guests module (local.exempt): protected.yaml `exemptions` AND the zone's `guest_allow` both
+    name this hostname with its VMID and the zone's bridge (docs/mgt-jumpbox-exception.md)."""
+    h, br = s["hostname"], z.get("bridge")
+    e = (prot.get("exemptions") or {}).get(h) or {}
+    g = (z.get("guest_allow") or {}).get(h) or {}
+    try:
+        return bool(br) and int(e.get("vmid", -1)) == int(s["vmid"]) == int(g.get("vmid", -2)) \
+            and e.get("bridge") == br == g.get("bridge")
+    except (TypeError, ValueError):
+        return False
+
+
+def l1(rep, s, zones, res, prot):
     h, zone, typ = s["hostname"], s["_zone"], s.get("type", "lxc")
     z = zones[zone]
     r = res.get(int(s["vmid"]))
@@ -105,8 +118,14 @@ def l1(rep, s, zones, res):
     rep.ok(h, "L1", "cores", int(cfg.get("cores", 1)) == sz["cores"], f"{cfg.get('cores')} (spec {sz['cores']})")
     rep.ok(h, "L1", "memory", int(cfg.get("memory", 0)) == sz["memory_mb"], f"{cfg.get('memory')} MB (spec {sz['memory_mb']})")
     net = kv(cfg.get("net0"))
-    rep.ok(h, "L1", "bridge+vlan", net.get("bridge") == z["bridge"] and net.get("tag") == str(z["vlan"]),
-           f"{net.get('bridge')} tag {net.get('tag')} (zone {z['bridge']} tag {z['vlan']})")
+    if exempt(s, z, prot):  # mgt is untagged on vmbr0 (not VLAN-aware, host 2026-11-13); net0 is attached by root
+        rep.ok(h, "L1", "bridge+vlan",
+               net.get("bridge") == z["bridge"] and not net.get("tag") and net.get("link_down") != "1",
+               f"{net.get('bridge')} tag {net.get('tag') or '-'} link_down {net.get('link_down') or '-'} "
+               f"(exempt: {z['bridge']} untagged, attached by root)")
+    else:
+        rep.ok(h, "L1", "bridge+vlan", net.get("bridge") == z["bridge"] and net.get("tag") == str(z["vlan"]),
+               f"{net.get('bridge')} tag {net.get('tag')} (zone {z['bridge']} tag {z['vlan']})")
     if typ == "lxc":
         disk = size_gb(cfg.get("rootfs"))
         ip = (net.get("ip") or "").split("/")[0]
@@ -260,7 +279,7 @@ def main():
     reach, l1only = [], []
     for h in want:
         try:
-            l1(rep, specs[h], zones, res)
+            l1(rep, specs[h], zones, res, prot)
         except Exception as e:
             rep.add(h, "L1", "platform read", "fail", e)
         if no_os(specs[h]):  # os none + tests: l1-only (Faris 2026-10-31): no OS since day 0, nothing to reach or test
